@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background-color: #0b0f14;
+  color: #e5e9ee;
+}
+
+* {
+  border-color: #1f2a36;
+}
+
+/* Visible keyboard focus everywhere — not just mouse hover */
+:focus-visible {
+  outline: 2px solid #f0a202;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

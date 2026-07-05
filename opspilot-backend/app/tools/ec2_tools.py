@@ -4,11 +4,14 @@ touching the LLM at all.
 """
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from agents import function_tool
 
 from app.services import ec2_service
+
+logger = logging.getLogger("app.tools.ec2")
 
 
 @function_tool
@@ -23,5 +26,7 @@ def list_ec2_instances(
 ) -> str:
     """List EC2 instances in the configured AWS account/region, including
     instance type, state, availability zone, and IP addresses."""
+    logger.info("tool_call list_ec2_instances state_filter=%s", state_filter)
     result = ec2_service.list_instances(state_filter=state_filter)
+    logger.info("tool_result list_ec2_instances count=%d", result.count)
     return result.model_dump_json()
