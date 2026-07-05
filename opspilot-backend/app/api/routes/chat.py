@@ -11,8 +11,8 @@ router = APIRouter()
 @router.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     try:
-        reply, provider = await run_chat_turn(request.message)
+        reply, provider, trace = await run_chat_turn(request.message)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
-    return ChatResponse(reply=reply, provider_used=provider)
+    return ChatResponse(reply=reply, provider_used=provider, trace=trace)

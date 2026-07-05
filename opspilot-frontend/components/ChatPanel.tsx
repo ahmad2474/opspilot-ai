@@ -1,17 +1,20 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { sendChatMessage } from "@/lib/api";
+import { sendChatMessage, type TraceStep } from "@/lib/api";
+import ReasoningTrace from "@/components/ReasoningTrace";
 
 interface Message {
   role: "user" | "assistant" | "error";
   content: string;
   provider?: string;
+  trace?: TraceStep[];
 }
 
 const SUGGESTIONS = [
   "What EC2 instances are running?",
   "Is any instance over 80% CPU?",
+  "Is anything wrong with my EC2 instance?",
 ];
 
 export default function ChatPanel() {
@@ -36,7 +39,12 @@ export default function ChatPanel() {
       const res = await sendChatMessage(trimmed);
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: res.reply, provider: res.provider_used },
+        {
+          role: "assistant",
+          content: res.reply,
+          provider: res.provider_used,
+          trace: res.trace,
+        },
       ]);
     } catch (err) {
       const detail = err instanceof Error ? err.message : "Unknown error";
@@ -94,6 +102,7 @@ export default function ChatPanel() {
                   answered by {m.provider}
                 </div>
               )}
+              {m.trace && <ReasoningTrace steps={m.trace} />}
             </div>
           ))}
           {sending && (

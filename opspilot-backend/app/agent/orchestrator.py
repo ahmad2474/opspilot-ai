@@ -3,28 +3,47 @@ layer calls. This is the only file that constructs an Agent or calls Runner.
 """
 from __future__ import annotations
 
+import json
 import logging
 
-from agents import Agent, Runner
+from agents import Agent, ItemHelpers, Runner
+from agents.items import MessageOutputItem, ToolCallItem, ToolCallOutputItem
 
 from app.agent.providers import ProviderNotConfiguredError, build_model
 from app.core.config import LLMProviderName, get_settings
+from app.models.chat import TraceStep
+from app.tools.cloudtrail_tools import list_recent_ec2_activity
 from app.tools.cloudwatch_tools import get_ec2_cpu_utilization
-from app.tools.ec2_tools import list_ec2_instances
+from app.tools.ec2_tools import get_ec2_status_check, list_ec2_instances
 
 logger = logging.getLogger(__name__)
 
 AGENT_INSTRUCTIONS = (
     "You are OpsPilot, a read-only DevOps investigation assistant for a single "
-    "AWS account. Use the available tools to answer questions about EC2 "
-    "instances and their CloudWatch CPU utilization — never guess at live "
-    "infrastructure state. When asked whether something is 'over 80% CPU', "
-    "call get_ec2_cpu_utilization and check its breached_80_percent field "
-    "rather than estimating. You cannot take any write/mutating action; if "
-    "asked to change something, say so plainly."
+    "AWS account. Never guess at live infrastructure state — always use tools.\n\n"
+    "For a simple lookup ('what instances are running', 'list my instances'), "
+    "just call the relevant tool and answer directly.\n\n"
+    "For an investigation question ('why is X slow', 'is anything wrong with "
+    "this instance', 'diagnose...', 'what happened last night'), follow this "
+    "protocol instead of a single lookup:\n"
+    "1. State the hypothesis you're testing in one short sentence before each "
+    "tool call, e.g. 'Checking whether CPU load explains this.'\n"
+    "2. Check CPU utilization first (get_ec2_cpu_utilization). If it breached "
+    "80%, that's your leading suspect — explain why and you can stop there.\n"
+    "3. If CPU is normal, don't stop — check get_ec2_status_check next, to "
+    "rule out an infrastructure-level fault (bad host, failed checks) as "
+    "opposed to a load-level one.\n"
+    "4. If status checks pass too, check list_recent_ec2_activity — a "
+    "perceived issue is often explained by something someone actually did "
+    "(stopped/started/rebooted/modified the instance), not a real fault.\n"
+    "5. Conclude with a short summary: which hypotheses you tested, which "
+    "were ruled out and why, and your final conclusion. If nothing found "
+    "explains the issue, say so plainly rather than inventing a cause.\n\n"
+    "You cannot take any write/mutating action; if asked to change something, "
+    "say so plainly."
 )
 
-TOOLS = [list_ec2_instances, get_ec2_cpu_utilization]
+TOOLS = [list_ec2_instances, get_ec2_cpu_utilization, get_ec2_status_check, list_recent_ec2_activity]
 
 
 def _build_agent(provider: LLMProviderName) -> Agent:
@@ -32,10 +51,47 @@ def _build_agent(provider: LLMProviderName) -> Agent:
     return Agent(name="OpsPilot", instructions=AGENT_INSTRUCTIONS, tools=TOOLS, model=model)
 
 
-async def run_chat_turn(user_message: str) -> tuple[str, str]:
+def _try_parse_json(value: str) -> object:
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
+
+
+def _extract_trace(new_items: list, final_output: str) -> list[TraceStep]:
+    """Walk the run's items into a UI-friendly step list: hypothesis
+    narration (message), tool call, tool result, repeated. The final
+    message is dropped from the trace since it's already `reply`.
+    """
+    steps: list[TraceStep] = []
+    for item in new_items:
+        if isinstance(item, ToolCallItem):
+            raw = item.raw_item
+            steps.append(
+                TraceStep(
+                    type="tool_call",
+                    tool=getattr(raw, "name", "unknown_tool"),
+                    arguments=_try_parse_json(getattr(raw, "arguments", "{}")),
+                )
+            )
+        elif isinstance(item, ToolCallOutputItem):
+            steps.append(TraceStep(type="tool_result", output=_try_parse_json(item.output)))
+        elif isinstance(item, MessageOutputItem):
+            text = ItemHelpers.text_message_output(item)
+            if text and text.strip():
+                steps.append(TraceStep(type="message", text=text.strip()))
+
+    # Drop a trailing message step that duplicates the final reply.
+    if steps and steps[-1].type == "message" and steps[-1].text == final_output.strip():
+        steps.pop()
+
+    return steps
+
+
+async def run_chat_turn(user_message: str) -> tuple[str, str, list[TraceStep]]:
     """Run one chat turn, falling back across providers on failure.
 
-    Returns (reply_text, provider_that_answered).
+    Returns (reply_text, provider_that_answered, reasoning_trace).
     Fallback order is settings.provider_order: configured primary first,
     then the rest of the fixed groq -> gemini -> nvidia chain.
     """
@@ -45,14 +101,15 @@ async def run_chat_turn(user_message: str) -> tuple[str, str]:
     for provider in settings.provider_order:
         try:
             agent = _build_agent(provider)
-        except ProviderNotConfiguredError as exc:
+        except ProviderNotConfiguredError:
             logger.info("Skipping unconfigured provider '%s'", provider)
-            last_error = exc
+            last_error = ProviderNotConfiguredError(provider)
             continue
 
         try:
             result = await Runner.run(agent, user_message)
-            return result.final_output, provider
+            trace = _extract_trace(result.new_items, result.final_output)
+            return result.final_output, provider, trace
         except Exception as exc:  # noqa: BLE001 - any provider failure should fall through to the next one
             logger.warning("Provider '%s' failed, falling back: %s", provider, exc)
             last_error = exc

@@ -19,3 +19,26 @@ class EC2Instance(BaseModel):
 class EC2InstanceList(BaseModel):
     instances: list[EC2Instance]
     count: int
+
+
+class EC2StatusCheck(BaseModel):
+    instance_id: str
+    instance_state: str
+    system_status: str = Field(description="e.g. ok, impaired, insufficient-data")
+    instance_status: str = Field(description="e.g. ok, impaired, insufficient-data")
+    scheduled_events: list[str] = Field(
+        default_factory=list, description="Any AWS-scheduled maintenance/events on this instance"
+    )
+
+
+class InstanceStatusSummary(BaseModel):
+    instance_id: str
+    instance_status: str = Field(description="ok | impaired | insufficient-data | not-applicable")
+    system_status: str = Field(description="ok | impaired | insufficient-data | not-applicable")
+    scheduled_events: list[str] = Field(
+        default_factory=list, description="Any scheduled maintenance/retirement events, if present"
+    )
+
+    @property
+    def all_checks_passed(self) -> bool:
+        return self.instance_status == "ok" and self.system_status == "ok"

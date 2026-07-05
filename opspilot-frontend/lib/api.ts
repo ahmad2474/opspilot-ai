@@ -1,8 +1,17 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
+export interface TraceStep {
+  type: "tool_call" | "tool_result" | "message";
+  tool?: string;
+  arguments?: unknown;
+  output?: unknown;
+  text?: string;
+}
+
 export interface ChatResponse {
   reply: string;
   provider_used: string;
+  trace: TraceStep[];
 }
 
 export interface Ec2Instance {

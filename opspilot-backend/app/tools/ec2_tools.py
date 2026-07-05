@@ -30,3 +30,21 @@ def list_ec2_instances(
     result = ec2_service.list_instances(state_filter=state_filter)
     logger.info("tool_result list_ec2_instances count=%d", result.count)
     return result.model_dump_json()
+
+
+@function_tool
+def get_ec2_status_check(
+    instance_id: Annotated[str, "The EC2 instance ID to check, e.g. i-0123456789abcdef0."],
+) -> str:
+    """Get instance-level and system-level status checks for an EC2
+    instance, plus any AWS-scheduled maintenance events. Use this to rule
+    out an infrastructure-level fault as distinct from a load/CPU issue."""
+    logger.info("tool_call get_ec2_status_check instance_id=%s", instance_id)
+    result = ec2_service.get_status_check(instance_id)
+    logger.info(
+        "tool_result get_ec2_status_check instance_id=%s system=%s instance=%s",
+        instance_id,
+        result.system_status,
+        result.instance_status,
+    )
+    return result.model_dump_json()
