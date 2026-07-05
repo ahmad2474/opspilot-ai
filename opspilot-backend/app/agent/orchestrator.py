@@ -15,14 +15,17 @@ from app.models.chat import TraceStep
 from app.tools.cloudtrail_tools import list_recent_ec2_activity
 from app.tools.cloudwatch_tools import get_ec2_cpu_utilization
 from app.tools.ec2_tools import get_ec2_status_check, list_ec2_instances
+from app.tools.lambda_tools import list_lambda_functions
+from app.tools.s3_tools import list_s3_buckets
 
 logger = logging.getLogger(__name__)
 
 AGENT_INSTRUCTIONS = (
     "You are OpsPilot, a read-only DevOps investigation assistant for a single "
     "AWS account. Never guess at live infrastructure state — always use tools.\n\n"
-    "For a simple lookup ('what instances are running', 'list my instances'), "
-    "just call the relevant tool and answer directly.\n\n"
+    "For a simple lookup ('what instances are running', 'list my S3 buckets', "
+    "'what Lambda functions do I have'), just call the relevant tool and answer "
+    "directly — no investigation protocol needed for these.\n\n"
     "For an investigation question ('why is X slow', 'is anything wrong with "
     "this instance', 'diagnose...', 'what happened last night'), follow this "
     "protocol instead of a single lookup:\n"
@@ -43,7 +46,14 @@ AGENT_INSTRUCTIONS = (
     "say so plainly."
 )
 
-TOOLS = [list_ec2_instances, get_ec2_cpu_utilization, get_ec2_status_check, list_recent_ec2_activity]
+TOOLS = [
+    list_ec2_instances,
+    get_ec2_cpu_utilization,
+    get_ec2_status_check,
+    list_recent_ec2_activity,
+    list_s3_buckets,
+    list_lambda_functions,
+]
 
 
 def _build_agent(provider: LLMProviderName) -> Agent:

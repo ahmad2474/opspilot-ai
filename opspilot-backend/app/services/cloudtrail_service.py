@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.aws.client import get_cloudtrail_client
 from app.models.cloudtrail import CloudTrailEvent, CloudTrailEventList
+from app.models.dashboard import CloudTrailCard
 
 
 def list_events_for_resource(resource_id: str, lookback_hours: int = 24) -> CloudTrailEventList:
@@ -35,3 +36,19 @@ def list_events_for_resource(resource_id: str, lookback_hours: int = 24) -> Clou
     ]
 
     return CloudTrailEventList(resource_id=resource_id, lookback_hours=lookback_hours, events=events)
+
+
+def list_recent_management_events(max_results: int = 5) -> CloudTrailCard:
+    """Account-wide recent activity, not tied to a specific instance —
+    this is the dashboard card's "what's this account been doing" feed."""
+    client = get_cloudtrail_client()
+    response = client.lookup_events(MaxResults=max_results)
+    events = [
+        CloudTrailEvent(
+            event_name=raw.get("EventName", "Unknown"),
+            event_time=raw["EventTime"],
+            username=raw.get("Username"),
+        )
+        for raw in response.get("Events", [])[:max_results]
+    ]
+    return CloudTrailCard(events=events)

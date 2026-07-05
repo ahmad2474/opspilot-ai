@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { getEc2Resources, type Ec2ResourceCard } from "@/lib/api";
 import Sparkline from "@/components/Sparkline";
 import StatusBadge from "@/components/StatusBadge";
+import ServiceCards from "@/components/ServiceCards";
 
 export default function ResourcesPanel() {
   const [cards, setCards] = useState<Ec2ResourceCard[] | null>(null);
@@ -63,6 +64,12 @@ export default function ResourcesPanel() {
       )}
 
       {!error && cards && cards.length > 0 && (
+        <div className="mb-3 font-mono text-[11px] uppercase tracking-wide text-muted">
+          EC2 — deep investigation
+        </div>
+      )}
+
+      {!error && cards && cards.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2">
           {cards.map((card) => (
             <div
@@ -112,6 +119,11 @@ export default function ResourcesPanel() {
           ))}
         </div>
       )}
+
+      <div className="mb-3 mt-8 font-mono text-[11px] uppercase tracking-wide text-muted">
+        Account overview
+      </div>
+      <ServiceCards />
     </div>
   );
 }

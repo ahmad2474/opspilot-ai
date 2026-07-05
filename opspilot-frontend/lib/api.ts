@@ -50,6 +50,46 @@ export interface ResourcesResponse {
   ec2: Ec2ResourceCard[];
 }
 
+export interface CloudTrailEvent {
+  event_name: string;
+  event_time: string;
+  username: string | null;
+}
+
+export interface LambdaCard {
+  functions: { name: string; runtime: string | null; last_modified: string | null }[];
+  count: number;
+}
+
+export interface S3Card {
+  buckets: { name: string; creation_date: string | null }[];
+  count: number;
+}
+
+export interface DynamoCard {
+  tables: { name: string; status: string; item_count: number | null }[];
+  count: number;
+}
+
+export interface SnsCard {
+  topics: { topic_arn: string; name: string }[];
+  count: number;
+}
+
+export interface RdsCard {
+  instances: { identifier: string; engine: string; instance_class: string; status: string }[];
+  count: number;
+}
+
+export interface DashboardOverview {
+  lambda_functions: LambdaCard;
+  s3: S3Card;
+  dynamodb: DynamoCard;
+  sns: SnsCard;
+  rds: RdsCard;
+  cloudtrail: { events: CloudTrailEvent[] };
+}
+
 class ApiError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
@@ -74,6 +114,16 @@ export async function sendChatMessage(message: string): Promise<ChatResponse> {
 
 export async function getEc2Resources(): Promise<ResourcesResponse> {
   const res = await fetch(`${API_BASE_URL}/resources/ec2`, { cache: "no-store" });
+
+  if (!res.ok) {
+    throw new ApiError(`Request failed with status ${res.status}`, res.status);
+  }
+
+  return res.json();
+}
+
+export async function getDashboardOverview(): Promise<DashboardOverview> {
+  const res = await fetch(`${API_BASE_URL}/resources/overview`, { cache: "no-store" });
 
   if (!res.ok) {
     throw new ApiError(`Request failed with status ${res.status}`, res.status);
