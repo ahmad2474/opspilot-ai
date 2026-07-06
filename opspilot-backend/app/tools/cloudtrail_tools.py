@@ -33,3 +33,17 @@ def list_recent_ec2_activity(
         len(result.events),
     )
     return result.model_dump_json()
+
+
+@function_tool
+def get_recent_account_activity(
+    max_results: Annotated[int, "How many recent events to return."] = 5,
+) -> str:
+    """List the most recent AWS management events across the whole
+    account (not tied to a specific EC2 instance) — e.g. 'what's this
+    account been doing lately'. Simple lookup, no investigation
+    reasoning needed."""
+    logger.info("tool_call get_recent_account_activity max_results=%d", max_results)
+    result = cloudtrail_service.list_recent_management_events(max_results=max_results)
+    logger.info("tool_result get_recent_account_activity event_count=%d", len(result.events))
+    return result.model_dump_json()

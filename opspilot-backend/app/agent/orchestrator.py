@@ -12,11 +12,14 @@ from agents.items import MessageOutputItem, ToolCallItem, ToolCallOutputItem
 from app.agent.providers import ProviderNotConfiguredError, build_model
 from app.core.config import LLMProviderName, get_settings
 from app.models.chat import TraceStep
-from app.tools.cloudtrail_tools import list_recent_ec2_activity
+from app.tools.cloudtrail_tools import get_recent_account_activity, list_recent_ec2_activity
 from app.tools.cloudwatch_tools import get_ec2_cpu_utilization
+from app.tools.dynamodb_tools import list_dynamodb_tables
 from app.tools.ec2_tools import get_ec2_status_check, list_ec2_instances
 from app.tools.lambda_tools import list_lambda_functions
+from app.tools.rds_tools import get_rds_status
 from app.tools.s3_tools import list_s3_buckets
+from app.tools.sns_tools import list_sns_topics
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +56,10 @@ TOOLS = [
     list_recent_ec2_activity,
     list_s3_buckets,
     list_lambda_functions,
+    get_rds_status,
+    list_dynamodb_tables,
+    list_sns_topics,
+    get_recent_account_activity,
 ]
 
 
