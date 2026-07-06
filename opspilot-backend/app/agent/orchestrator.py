@@ -127,7 +127,7 @@ async def run_chat_turn(user_message: str) -> tuple[str, str, list[TraceStep]]:
             result = await Runner.run(agent, user_message)
             trace = _extract_trace(result.new_items, result.final_output)
             return result.final_output, provider, trace
-        except Exception as exc:  # noqa: BLE001 - any provider failure should fall through to the next one
+        except Exception as exc:  # noqa: BLE001 - fall through to next provider
             logger.warning("Provider '%s' failed, falling back: %s", provider, exc)
             last_error = exc
             continue

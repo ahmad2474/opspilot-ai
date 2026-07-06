@@ -11,7 +11,14 @@ import logging
 from fastapi import APIRouter
 
 from app.models.dashboard import DashboardOverview
-from app.services import cloudtrail_service, dynamodb_service, lambda_service, rds_service, s3_service, sns_service
+from app.services import (
+    cloudtrail_service,
+    dynamodb_service,
+    lambda_service,
+    rds_service,
+    s3_service,
+    sns_service,
+)
 
 logger = logging.getLogger("app.api.dashboard")
 

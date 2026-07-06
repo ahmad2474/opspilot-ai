@@ -8,10 +8,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-load_dotenv()
 
 LLMProviderName = Literal["groq", "gemini", "nvidia"]
 
@@ -55,7 +52,8 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> list[str]:
-        return [origin.strip() for origin in self.opspilot_cors_origins.split(",") if origin.strip()]
+        origins = self.opspilot_cors_origins.split(",")
+        return [origin.strip() for origin in origins if origin.strip()]
 
     @property
     def provider_order(self) -> tuple[LLMProviderName, ...]:

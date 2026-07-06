@@ -35,7 +35,9 @@ def list_events_for_resource(resource_id: str, lookback_hours: int = 24) -> Clou
         for raw in response.get("Events", [])
     ]
 
-    return CloudTrailEventList(resource_id=resource_id, lookback_hours=lookback_hours, events=events)
+    return CloudTrailEventList(
+        resource_id=resource_id, lookback_hours=lookback_hours, events=events
+    )
 
 
 def list_recent_management_events(max_results: int = 5) -> CloudTrailCard:
