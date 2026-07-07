@@ -125,13 +125,13 @@ opspilot-ai/
 | 5 | Recommendations | Skipped — roadmap's own "cut first if time-constrained" |
 | 6 | CI (green), README | ✅ / demo GIF skipped by explicit choice |
 | 7 | MCP server exposing the same services/ layer | ✅ built **and verified** (2026-07-08) — `app/mcp/server.py` registers 11 tools across all 8 services; `tests/test_mcp_server.py` (12 tests) passes against the real installed `mcp==1.28.1` package (not mocked); a manual stdio JSON-RPC smoke test (`initialize` → `tools/list`) confirmed a real MCP client sees all 11 tools |
-| 8 | RAG — investigation memory | ⚠️ **code complete, blocked on one manual IAM change** (2026-07-08) — `app/services/investigation_service.py` (Gemini `gemini-embedding-001` embeddings + DynamoDB persistence + brute-force cosine similarity), wired as `find_similar_past_investigations` into both the Agents SDK chat tools and the MCP server, plus automatic post-turn persistence in `orchestrator.py`. Verified live against the real backend: the embedding call succeeds end-to-end; the `PutItem` call correctly fails with `AccessDeniedException` because the IAM policy hasn't been updated yet (see Section 6a). Chat degrades gracefully — a failed save never breaks the chat reply, it just logs a warning. |
+| 8 | RAG — investigation memory | ✅ built **and verified end-to-end** (2026-07-08) — `app/services/investigation_service.py` (Gemini `gemini-embedding-001` embeddings + DynamoDB persistence + brute-force cosine similarity), wired as `find_similar_past_investigations` into both the Agents SDK chat tools and the MCP server, plus automatic post-turn persistence in `orchestrator.py`. IAM policy updated with the scoped `PutItem`/`Scan` statement (Section 6a); confirmed live: a chat turn wrote a real item to `opspilot-investigations` (verified via direct `scan`), and a follow-up question ("have I asked about this before?") correctly triggered `find_similar_past_investigations`, retrieved the prior investigation at 0.71 cosine similarity, and summarized it in the reply. |
 
 **Not yet started:** Langfuse (observability) — see Section 8.
 
-### 6a. Required IAM policy addition for Phase 8
+### 6a. IAM policy addition for Phase 8 (done — kept for reference)
 
-The `opspilot-app` IAM user needs a new statement added (don't loosen the existing one — keep it scoped to just this table, matching the project's least-privilege pattern):
+The `opspilot-app` IAM user needed a new statement added (kept scoped to just this table, not loosening the existing read-only statement — matches the project's least-privilege pattern). Already applied as of 2026-07-08:
 
 ```json
 {
@@ -174,12 +174,8 @@ Add this as a second statement in the same policy documented in `AWS_ZeroSpend_S
 
 ## 9. Next steps
 
-### RAG — investigation memory (code complete, one manual step left)
-- Built 2026-07-08: `app/services/investigation_service.py`, `app/tools/investigation_tools.py`, wired into the orchestrator (auto-save every turn) and the MCP server (`find_similar_past_investigations` tool).
-- Embedding approach — **decided:** Gemini `gemini-embedding-001` (free API endpoint, reuses the already-configured `GEMINI_API_KEY`, avoids adding `torch`/`sentence-transformers` to keep the image lean).
-- No dedicated vector DB — brute-force cosine similarity over embeddings pulled from DynamoDB at query time, confirmed appropriate at this scale.
-- **Remaining:** add the IAM policy statement in Section 6a above. Until then, `save_investigation` fails with `AccessDeniedException` on every turn (logged as a warning, chat still works — verified live) and `find_similar_past_investigations` will fail the same way once there's anything to scan.
-- Once the IAM change is live, do one more live verification: ask a question, confirm the item lands in the table (`aws dynamodb scan --table-name opspilot-investigations`), then ask a similar question and confirm the agent actually calls `find_similar_past_investigations` and surfaces the match.
+### RAG — investigation memory — ✅ done (2026-07-08), see Phase 8 above
+Nothing left here. Fully verified live: a chat turn persists to DynamoDB, and a follow-up question retrieves it via cosine similarity and factors it into the reply.
 
 ### Langfuse — observability (not started, legitimate future addition)
 - Real, open-source LLM tracing tool — a genuine "LLMOps" CV line if implemented honestly (unlike the rejected blueprint's version).
