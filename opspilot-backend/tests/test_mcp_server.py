@@ -23,6 +23,7 @@ from app.models.dashboard import (
     SnsTopicSummary,
 )
 from app.models.ec2 import EC2Instance, EC2InstanceList, EC2StatusCheck
+from app.models.investigation import SimilarInvestigation
 
 
 def _call_tool(name: str, arguments: dict) -> dict | None:
@@ -46,6 +47,7 @@ def test_all_tools_are_registered() -> None:
         "list_dynamodb_tables",
         "list_sns_topics",
         "list_rds_instances",
+        "find_similar_past_investigations",
     }
 
 
@@ -219,3 +221,22 @@ def test_list_rds_instances(mock_instances: object) -> None:
     result = _call_tool("list_rds_instances", {})
 
     assert result["instances"][0]["identifier"] == "opspilot-db"
+
+
+@patch("app.mcp.server.investigation_service.find_similar_past_investigations")
+def test_find_similar_past_investigations(mock_find: object) -> None:
+    mock_find.return_value = [
+        SimilarInvestigation(
+            id="inv-1",
+            question="Is anything wrong with my instance?",
+            trace_summary="Checked CPU, checked status checks.",
+            conclusion="Nothing wrong.",
+            created_at="2026-07-01T00:00:00Z",
+            similarity=0.92,
+        )
+    ]
+
+    result = _call_tool("find_similar_past_investigations", {"query": "instance issue", "top_k": 3})
+
+    mock_find.assert_called_once_with("instance issue", top_k=3)
+    assert result["results"][0]["id"] == "inv-1"

@@ -7,6 +7,8 @@ function and returns its result as JSON.
 """
 from __future__ import annotations
 
+import json
+
 from mcp.server.fastmcp import FastMCP
 
 from app.services import (
@@ -14,6 +16,7 @@ from app.services import (
     cloudwatch_service,
     dynamodb_service,
     ec2_service,
+    investigation_service,
     lambda_service,
     rds_service,
     s3_service,
@@ -104,6 +107,14 @@ def list_sns_topics() -> str:
 def list_rds_instances() -> str:
     """List RDS instances in the configured region."""
     return rds_service.list_instances().model_dump_json()
+
+
+@mcp.tool()
+def find_similar_past_investigations(query: str, top_k: int = 3) -> str:
+    """Search past chat investigations for ones semantically similar to the
+    given query, using cosine similarity over Gemini embeddings."""
+    results = investigation_service.find_similar_past_investigations(query, top_k=top_k)
+    return json.dumps({"results": [r.model_dump() for r in results]})
 
 
 def main() -> None:

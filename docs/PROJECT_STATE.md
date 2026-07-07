@@ -105,7 +105,7 @@ opspilot-ai/
 |---|---|---|
 | EC2 | `i-02eaea0572f34f5b5`, t3.micro, us-east-1d | Tags: Project=opspilot, Name=opspilot-agent-target |
 | S3 | `opspilot-demo-ahmad-2026` | |
-| DynamoDB | `opspilot-investigations` (partition key `id`, on-demand) | **Provisioned but not yet used by any code** — this is the RAG phase's target table |
+| DynamoDB | `opspilot-investigations` (partition key `id`, on-demand) | **Code is written and wired in (Phase 8), but writes are currently blocked** — the `opspilot-app` IAM policy only grants `ListTables`/`DescribeTable`; needs `PutItem`+`Scan` scoped to this table's ARN added before investigations actually persist. See Section 6. |
 | SNS | `opspilot-alerts` | |
 | Lambda | `opspilot-function`, python3.14 runtime | Placeholder, dashboard card only |
 | RDS | `opspilot-db`, MySQL, db.t4g.micro | **Kept stopped** — the one service drawing real credit; auto-restarts after 7 days stopped, check periodically |
@@ -125,8 +125,26 @@ opspilot-ai/
 | 5 | Recommendations | Skipped — roadmap's own "cut first if time-constrained" |
 | 6 | CI (green), README | ✅ / demo GIF skipped by explicit choice |
 | 7 | MCP server exposing the same services/ layer | ✅ built **and verified** (2026-07-08) — `app/mcp/server.py` registers 11 tools across all 8 services; `tests/test_mcp_server.py` (12 tests) passes against the real installed `mcp==1.28.1` package (not mocked); a manual stdio JSON-RPC smoke test (`initialize` → `tools/list`) confirmed a real MCP client sees all 11 tools |
+| 8 | RAG — investigation memory | ⚠️ **code complete, blocked on one manual IAM change** (2026-07-08) — `app/services/investigation_service.py` (Gemini `gemini-embedding-001` embeddings + DynamoDB persistence + brute-force cosine similarity), wired as `find_similar_past_investigations` into both the Agents SDK chat tools and the MCP server, plus automatic post-turn persistence in `orchestrator.py`. Verified live against the real backend: the embedding call succeeds end-to-end; the `PutItem` call correctly fails with `AccessDeniedException` because the IAM policy hasn't been updated yet (see Section 6a). Chat degrades gracefully — a failed save never breaks the chat reply, it just logs a warning. |
 
-**Not yet started:** RAG (investigation memory), Langfuse (observability) — see Section 8.
+**Not yet started:** Langfuse (observability) — see Section 8.
+
+### 6a. Required IAM policy addition for Phase 8
+
+The `opspilot-app` IAM user needs a new statement added (don't loosen the existing one — keep it scoped to just this table, matching the project's least-privilege pattern):
+
+```json
+{
+  "Effect": "Allow",
+  "Action": [
+    "dynamodb:PutItem",
+    "dynamodb:Scan"
+  ],
+  "Resource": "arn:aws:dynamodb:us-east-1:476141958109:table/opspilot-investigations"
+}
+```
+
+Add this as a second statement in the same policy documented in `AWS_ZeroSpend_Setup_Guide.md` Section 4. Until this is added, Phase 8 runs in a fully degraded (no-op) mode — chat still works, nothing persists.
 
 ---
 
@@ -142,6 +160,8 @@ opspilot-ai/
 8. **Agent inconsistently skipped tools on broad "list everything" questions** — LLM tool selection isn't deterministic by default. Fixed by explicitly instructing the agent to call all 7 read tools for inventory-style questions and report "none found" rather than silently omitting a service.
 9. **`mcp[cli]>=1.27` requires `pydantic>=2.11`**, conflicting with the repo's prior `pydantic==2.10.3` pin — bumped to `pydantic==2.13.4`. If you ever see a pip `ResolutionImpossible` mentioning both `mcp` and `pydantic`, this is why.
 10. **On Windows, a `pip install --upgrade` that gets interrupted mid-uninstall** (e.g. a locked file in a package being replaced) can leave a package **half-uninstalled but with its files still on disk under a `~name` directory**, while dependent packages it pulled in (e.g. a bumped `pydantic`) are already installed — `pip show <pkg>` will report nothing installed even though the code still imports fine. Always re-run `pip install -r requirements.txt` and `pip check` after any interrupted install to confirm a consistent state, and clean up leftover `~name`/`~name-*.dist-info` directories in `site-packages`.
+11. **Gemini's `text-embedding-004` model is deprecated/404s as of mid-2026** — current models for this API key are `gemini-embedding-001` (stable, what we use), `gemini-embedding-2`, `gemini-embedding-2-preview`. If embeddings ever start 404ing, call `GET /v1beta/models` and grep for `embedContent` in `supportedGenerationMethods` to see what's actually available before assuming the code is broken.
+12. **Never pass a Google Generative Language API key as a `?key=` query param** — httpx (and most HTTP clients) embed the full request URL, including query string, in exception messages on a non-2xx response, so a transient API error becomes a credential leaked straight into your logs. Use the `x-goog-api-key` header instead — same auth, nothing sensitive ends up in the URL. (`investigation_service._embed` does this correctly; if you add another Google REST call, match the pattern.)
 
 ---
 
@@ -154,13 +174,12 @@ opspilot-ai/
 
 ## 9. Next steps
 
-### RAG — investigation memory (not started)
-- Persist every chat investigation (question, hypothesis trace summary, conclusion, timestamp) to the already-provisioned `opspilot-investigations` DynamoDB table via a new `app/services/investigation_service.py`.
-- Embedding approach — **undecided, pick one when starting:**
-  - Local `sentence-transformers` (e.g. `all-MiniLM-L6-v2`) — zero API cost, but adds `torch` (heavy install/image).
-  - Gemini's free embedding endpoint (`text-embedding-004`) — lighter, but needs `GEMINI_API_KEY` configured and is a different integration path than the existing OpenAI-compatible chat endpoint.
-- No dedicated vector DB — brute-force cosine similarity over embeddings pulled from DynamoDB at query time is appropriate at this scale (good talking point for an interview, same reasoning as the Terraform-scoping-out decision).
-- New tool `find_similar_past_investigations(query, top_k=3)`, wired into **both** the Agents SDK chat tools and the MCP server — same "one service layer, multiple consumers" pattern already established (MCP server now confirms this pattern works end-to-end).
+### RAG — investigation memory (code complete, one manual step left)
+- Built 2026-07-08: `app/services/investigation_service.py`, `app/tools/investigation_tools.py`, wired into the orchestrator (auto-save every turn) and the MCP server (`find_similar_past_investigations` tool).
+- Embedding approach — **decided:** Gemini `gemini-embedding-001` (free API endpoint, reuses the already-configured `GEMINI_API_KEY`, avoids adding `torch`/`sentence-transformers` to keep the image lean).
+- No dedicated vector DB — brute-force cosine similarity over embeddings pulled from DynamoDB at query time, confirmed appropriate at this scale.
+- **Remaining:** add the IAM policy statement in Section 6a above. Until then, `save_investigation` fails with `AccessDeniedException` on every turn (logged as a warning, chat still works — verified live) and `find_similar_past_investigations` will fail the same way once there's anything to scan.
+- Once the IAM change is live, do one more live verification: ask a question, confirm the item lands in the table (`aws dynamodb scan --table-name opspilot-investigations`), then ask a similar question and confirm the agent actually calls `find_similar_past_investigations` and surfaces the match.
 
 ### Langfuse — observability (not started, legitimate future addition)
 - Real, open-source LLM tracing tool — a genuine "LLMOps" CV line if implemented honestly (unlike the rejected blueprint's version).

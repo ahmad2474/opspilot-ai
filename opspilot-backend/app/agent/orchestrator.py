@@ -3,6 +3,7 @@ layer calls. This is the only file that constructs an Agent or calls Runner.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -12,10 +13,12 @@ from agents.items import MessageOutputItem, ToolCallItem, ToolCallOutputItem
 from app.agent.providers import ProviderNotConfiguredError, build_model
 from app.core.config import LLMProviderName, get_settings
 from app.models.chat import TraceStep
+from app.services import investigation_service
 from app.tools.cloudtrail_tools import get_recent_account_activity, list_recent_ec2_activity
 from app.tools.cloudwatch_tools import get_ec2_cpu_utilization
 from app.tools.dynamodb_tools import list_dynamodb_tables
 from app.tools.ec2_tools import get_ec2_status_check, list_ec2_instances
+from app.tools.investigation_tools import find_similar_past_investigations
 from app.tools.lambda_tools import list_lambda_functions
 from app.tools.rds_tools import get_rds_status
 from app.tools.s3_tools import list_s3_buckets
@@ -53,6 +56,10 @@ AGENT_INSTRUCTIONS = (
     "5. Conclude with a short summary: which hypotheses you tested, which "
     "were ruled out and why, and your final conclusion. If nothing found "
     "explains the issue, say so plainly rather than inventing a cause.\n\n"
+    "If a question sounds like a recurring issue or something that may have "
+    "come up before ('this happened again', 'didn't we see this last week'), "
+    "call find_similar_past_investigations first and factor any relevant "
+    "results into your answer.\n\n"
     "You cannot take any write/mutating action; if asked to change something, "
     "say so plainly.\n\n"
     "Formatting: when summarizing more than one service, use a separate short "
@@ -72,6 +79,7 @@ TOOLS = [
     list_dynamodb_tables,
     list_sns_topics,
     get_recent_account_activity,
+    find_similar_past_investigations,
 ]
 
 
@@ -117,6 +125,25 @@ def _extract_trace(new_items: list, final_output: str) -> list[TraceStep]:
     return steps
 
 
+def _summarize_trace(trace: list[TraceStep]) -> str:
+    """Join the hypothesis-narration steps into a short summary for
+    investigation memory. Simple lookups (no investigation protocol) have
+    no message steps — summarize as a direct lookup instead."""
+    hypotheses = [step.text for step in trace if step.type == "message" and step.text]
+    if not hypotheses:
+        return "Direct lookup — no investigation protocol triggered."
+    return " ".join(hypotheses)
+
+
+def _save_investigation(question: str, trace_summary: str, conclusion: str) -> None:
+    """Persist to investigation memory, never letting a failure (missing
+    Gemini key, DynamoDB access denied, etc.) break the chat turn."""
+    try:
+        investigation_service.save_investigation(question, trace_summary, conclusion)
+    except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+        logger.warning("Failed to save investigation to memory: %s", exc)
+
+
 async def run_chat_turn(user_message: str) -> tuple[str, str, list[TraceStep]]:
     """Run one chat turn, falling back across providers on failure.
 
@@ -138,6 +165,10 @@ async def run_chat_turn(user_message: str) -> tuple[str, str, list[TraceStep]]:
         try:
             result = await Runner.run(agent, user_message)
             trace = _extract_trace(result.new_items, result.final_output)
+            trace_summary = _summarize_trace(trace)
+            await asyncio.to_thread(
+                _save_investigation, user_message, trace_summary, result.final_output
+            )
             return result.final_output, provider, trace
         except Exception as exc:  # noqa: BLE001 - fall through to next provider
             logger.warning("Provider '%s' failed, falling back: %s", provider, exc)

@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model: str = "gemini-2.5-flash"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    gemini_embedding_model: str = "gemini-embedding-001"
 
     nvidia_api_key: str | None = None
     nvidia_model: str = "meta/llama-3.3-70b-instruct"
@@ -52,6 +53,9 @@ class Settings(BaseSettings):
     # --- App -----------------------------------------------------------
     opspilot_app_env: Literal["local", "ci", "prod"] = "local"
     opspilot_cors_origins: str = "http://localhost:3000"
+
+    # --- Investigation memory (RAG) -------------------------------------
+    opspilot_investigations_table: str = "opspilot-investigations"
 
     @property
     def cors_origins_list(self) -> list[str]:
