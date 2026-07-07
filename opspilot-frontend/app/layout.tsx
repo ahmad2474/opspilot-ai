@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en" className={`${inter.variable} ${jbmono.variable}`}>
       <body className="min-h-screen bg-bg font-sans text-text">
         <NavBar />
-        <main className="mx-auto max-w-5xl px-6 py-8">{children}</main>
+        <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
       </body>
     </html>
   );

@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { sendChatMessage, type TraceStep } from "@/lib/api";
 import ReasoningTrace from "@/components/ReasoningTrace";
 
@@ -87,15 +89,21 @@ export default function ChatPanel() {
           {messages.map((m, i) => (
             <div key={i} className={m.role === "user" ? "self-end" : "self-start"}>
               <div
-                className={`max-w-xl rounded-lg px-4 py-2.5 text-sm leading-relaxed ${
+                className={`rounded-lg px-4 py-2.5 text-sm leading-relaxed ${
                   m.role === "user"
-                    ? "bg-accent/90 text-bg"
+                    ? "max-w-xl bg-accent/90 text-bg"
                     : m.role === "error"
-                      ? "border border-status-bad/40 bg-status-bad/10 text-status-bad"
-                      : "border border-border bg-surfacealt text-text"
+                      ? "max-w-xl border border-status-bad/40 bg-status-bad/10 text-status-bad"
+                      : "max-w-4xl border border-border bg-surfacealt text-text"
                 }`}
               >
-                <div className="whitespace-pre-wrap">{m.content}</div>
+                {m.role === "user" || m.role === "error" ? (
+                  <div className="whitespace-pre-wrap">{m.content}</div>
+                ) : (
+                  <div className="prose prose-invert prose-sm max-w-none prose-table:text-xs prose-th:text-muted prose-td:align-top prose-code:before:content-none prose-code:after:content-none">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                  </div>
+                )}
               </div>
               {m.provider && (
                 <div className="mt-1 font-mono text-[11px] text-muted">

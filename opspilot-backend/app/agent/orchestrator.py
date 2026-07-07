@@ -29,6 +29,14 @@ AGENT_INSTRUCTIONS = (
     "For a simple lookup ('what instances are running', 'list my S3 buckets', "
     "'what Lambda functions do I have'), just call the relevant tool and answer "
     "directly — no investigation protocol needed for these.\n\n"
+    "For a broad inventory question ('list all resources', 'what's in this "
+    "account', 'give me a full inventory'), call every one of these tools "
+    "once, even if you expect a service to be empty — do not skip any: "
+    "list_ec2_instances, list_s3_buckets, list_lambda_functions, "
+    "list_dynamodb_tables, list_sns_topics, get_rds_status, "
+    "get_recent_account_activity. Report on every service explicitly, "
+    "including 'no functions found' for an empty one — don't silently omit "
+    "a service just because it has nothing running.\n\n"
     "For an investigation question ('why is X slow', 'is anything wrong with "
     "this instance', 'diagnose...', 'what happened last night'), follow this "
     "protocol instead of a single lookup:\n"
@@ -46,7 +54,11 @@ AGENT_INSTRUCTIONS = (
     "were ruled out and why, and your final conclusion. If nothing found "
     "explains the issue, say so plainly rather than inventing a cause.\n\n"
     "You cannot take any write/mutating action; if asked to change something, "
-    "say so plainly."
+    "say so plainly.\n\n"
+    "Formatting: when summarizing more than one service, use a separate short "
+    "section (a heading or a bullet, not one giant table) for anything that "
+    "isn't the same shape of data — e.g. keep a resource-inventory table "
+    "separate from a recent-activity log, don't merge them into one table."
 )
 
 TOOLS = [
