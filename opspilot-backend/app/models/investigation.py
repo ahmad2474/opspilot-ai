@@ -25,3 +25,7 @@ class SimilarInvestigation(BaseModel):
 class SimilarInvestigationList(BaseModel):
     query: str
     results: list[SimilarInvestigation]
+
+
+class InvestigationList(BaseModel):
+    investigations: list[Investigation]

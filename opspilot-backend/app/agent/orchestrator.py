@@ -101,18 +101,29 @@ def _extract_trace(new_items: list, final_output: str) -> list[TraceStep]:
     message is dropped from the trace since it's already `reply`.
     """
     steps: list[TraceStep] = []
+    pending_tool_name: str | None = None
     for item in new_items:
         if isinstance(item, ToolCallItem):
             raw = item.raw_item
+            pending_tool_name = getattr(raw, "name", "unknown_tool")
             steps.append(
                 TraceStep(
                     type="tool_call",
-                    tool=getattr(raw, "name", "unknown_tool"),
+                    tool=pending_tool_name,
                     arguments=_try_parse_json(getattr(raw, "arguments", "{}")),
                 )
             )
         elif isinstance(item, ToolCallOutputItem):
-            steps.append(TraceStep(type="tool_result", output=_try_parse_json(item.output)))
+            # Tool calls execute immediately followed by their result, so the
+            # last-seen call's name is this result's — lets the UI pair a
+            # result back to the tool that produced it (e.g. to badge a
+            # find_similar_past_investigations hit) without index-guessing.
+            steps.append(
+                TraceStep(
+                    type="tool_result", tool=pending_tool_name, output=_try_parse_json(item.output)
+                )
+            )
+            pending_tool_name = None
         elif isinstance(item, MessageOutputItem):
             text = ItemHelpers.text_message_output(item)
             if text and text.strip():

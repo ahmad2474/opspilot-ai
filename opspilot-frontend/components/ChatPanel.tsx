@@ -6,11 +6,17 @@ import remarkGfm from "remark-gfm";
 import { sendChatMessage, type TraceStep } from "@/lib/api";
 import ReasoningTrace from "@/components/ReasoningTrace";
 
+interface RecalledInvestigation {
+  question: string;
+  similarity: number;
+}
+
 interface Message {
   role: "user" | "assistant" | "error";
   content: string;
   provider?: string;
   trace?: TraceStep[];
+  recalledFrom?: RecalledInvestigation | null;
 }
 
 const SUGGESTIONS = [
@@ -18,6 +24,16 @@ const SUGGESTIONS = [
   "Is any instance over 80% CPU?",
   "Is anything wrong with my EC2 instance?",
 ];
+
+function extractRecall(trace: TraceStep[]): RecalledInvestigation | null {
+  const step = trace.find(
+    (s) => s.type === "tool_result" && s.tool === "find_similar_past_investigations"
+  );
+  const results = (step?.output as { results?: { question: string; similarity: number }[] })
+    ?.results;
+  if (!results || results.length === 0) return null;
+  return { question: results[0].question, similarity: results[0].similarity };
+}
 
 export default function ChatPanel() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -46,6 +62,7 @@ export default function ChatPanel() {
           content: res.reply,
           provider: res.provider_used,
           trace: res.trace,
+          recalledFrom: extractRecall(res.trace),
         },
       ]);
     } catch (err) {
@@ -105,6 +122,12 @@ export default function ChatPanel() {
                   </div>
                 )}
               </div>
+              {m.recalledFrom && (
+                <div className="mt-1 font-mono text-[11px] text-accent">
+                  🔁 recalled past investigation ({Math.round(m.recalledFrom.similarity * 100)}%
+                  match): &ldquo;{m.recalledFrom.question}&rdquo;
+                </div>
+              )}
               {m.provider && (
                 <div className="mt-1 font-mono text-[11px] text-muted">
                   answered by {m.provider}

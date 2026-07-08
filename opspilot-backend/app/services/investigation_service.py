@@ -124,3 +124,29 @@ def find_similar_past_investigations(query: str, top_k: int = 3) -> list[Similar
         )
         for similarity, raw in scored[:top_k]
     ]
+
+
+def list_recent_investigations(limit: int = 20) -> list[Investigation]:
+    """Every persisted investigation, newest first — powers the read-only
+    Investigations page. No embedding field in the response; it's large
+    and irrelevant to a human reader."""
+    settings = get_settings()
+    client = get_dynamodb_client()
+
+    items: list[dict] = []
+    paginator = client.get_paginator("scan")
+    for page in paginator.paginate(TableName=settings.opspilot_investigations_table):
+        items.extend(page.get("Items", []))
+
+    items.sort(key=lambda raw: raw["created_at"]["S"], reverse=True)
+
+    return [
+        Investigation(
+            id=raw["id"]["S"],
+            question=raw["question"]["S"],
+            trace_summary=raw["trace_summary"]["S"],
+            conclusion=raw["conclusion"]["S"],
+            created_at=raw["created_at"]["S"],
+        )
+        for raw in items[:limit]
+    ]

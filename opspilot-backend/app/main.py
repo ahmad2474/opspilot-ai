@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import chat, dashboard, health, resources
+from app.api.routes import chat, dashboard, health, investigations, mcp_info, resources
 from app.core.config import get_settings
 from app.core.logging import RequestIdMiddleware, configure_logging
 
@@ -29,3 +29,5 @@ app.include_router(health.router, tags=["health"])
 app.include_router(chat.router, tags=["chat"])
 app.include_router(resources.router, tags=["resources"])
 app.include_router(dashboard.router, tags=["dashboard"])
+app.include_router(investigations.router, tags=["investigations"])
+app.include_router(mcp_info.router, tags=["mcp"])

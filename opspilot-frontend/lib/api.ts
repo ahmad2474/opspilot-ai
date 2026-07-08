@@ -90,6 +90,34 @@ export interface DashboardOverview {
   cloudtrail: { events: CloudTrailEvent[] };
 }
 
+export interface Investigation {
+  id: string;
+  question: string;
+  trace_summary: string;
+  conclusion: string;
+  created_at: string;
+}
+
+export interface InvestigationList {
+  investigations: Investigation[];
+}
+
+export interface SimilarInvestigationResult extends Investigation {
+  similarity: number;
+}
+
+export interface McpToolInfo {
+  name: string;
+  description: string | null;
+}
+
+export interface McpServerInfo {
+  server_name: string;
+  transport: string;
+  tool_count: number;
+  tools: McpToolInfo[];
+}
+
 class ApiError extends Error {
   constructor(message: string, public status?: number) {
     super(message);
@@ -124,6 +152,26 @@ export async function getEc2Resources(): Promise<ResourcesResponse> {
 
 export async function getDashboardOverview(): Promise<DashboardOverview> {
   const res = await fetch(`${API_BASE_URL}/resources/overview`, { cache: "no-store" });
+
+  if (!res.ok) {
+    throw new ApiError(`Request failed with status ${res.status}`, res.status);
+  }
+
+  return res.json();
+}
+
+export async function getInvestigations(): Promise<InvestigationList> {
+  const res = await fetch(`${API_BASE_URL}/investigations`, { cache: "no-store" });
+
+  if (!res.ok) {
+    throw new ApiError(`Request failed with status ${res.status}`, res.status);
+  }
+
+  return res.json();
+}
+
+export async function getMcpServerInfo(): Promise<McpServerInfo> {
+  const res = await fetch(`${API_BASE_URL}/mcp/tools`, { cache: "no-store" });
 
   if (!res.ok) {
     throw new ApiError(`Request failed with status ${res.status}`, res.status);

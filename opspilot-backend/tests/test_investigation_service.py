@@ -128,3 +128,41 @@ def test_embed_raises_without_gemini_key(mock_get_settings: MagicMock) -> None:
         raised = True
 
     assert raised
+
+
+@patch("app.services.investigation_service.get_settings")
+@patch("app.services.investigation_service.get_dynamodb_client")
+def test_list_recent_investigations_sorts_newest_first_and_respects_limit(
+    mock_get_client: MagicMock, mock_get_settings: MagicMock
+) -> None:
+    mock_get_settings.return_value = MagicMock(
+        opspilot_investigations_table="opspilot-investigations"
+    )
+
+    def _item(item_id: str, created_at: str) -> dict:
+        return {
+            "id": {"S": item_id},
+            "question": {"S": f"Q-{item_id}"},
+            "trace_summary": {"S": "T"},
+            "conclusion": {"S": "C"},
+            "created_at": {"S": created_at},
+            "embedding": {"S": "[0.1]"},
+        }
+
+    mock_client = MagicMock()
+    mock_client.get_paginator.return_value = _fake_paginator(
+        [
+            {
+                "Items": [
+                    _item("older", "2026-07-01T00:00:00Z"),
+                    _item("newest", "2026-07-08T00:00:00Z"),
+                    _item("middle", "2026-07-05T00:00:00Z"),
+                ]
+            }
+        ]
+    )
+    mock_get_client.return_value = mock_client
+
+    results = investigation_service.list_recent_investigations(limit=2)
+
+    assert [r.id for r in results] == ["newest", "middle"]
