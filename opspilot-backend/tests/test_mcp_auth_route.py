@@ -22,21 +22,21 @@ def _client_error(code: str, message: str) -> ClientError:
 # body (see app/core/aws_errors.py's module docstring).
 _RAW_ACCESS_DENIED_MESSAGE = (
     "An error occurred (AccessDeniedException) when calling the GetItem "
-    "operation: User: arn:aws:iam::476141958109:user/opspilot-app is not "
+    "operation: User: arn:aws:iam::123456789012:user/opspilot-app is not "
     "authorized to perform: dynamodb:GetItem on resource: "
-    "arn:aws:dynamodb:us-east-1:476141958109:table/opspilot-mcp-tokens"
+    "arn:aws:dynamodb:us-east-1:123456789012:table/opspilot-mcp-tokens"
 )
 
 
 def _assert_sanitized_502(response, caplog) -> None:
     assert response.status_code == 502
     detail = response.json()["detail"]
-    assert "476141958109" not in detail
+    assert "123456789012" not in detail
     assert "arn:aws:iam" not in detail
     assert "AccessDeniedException" not in detail
     assert "opspilot-app" not in detail
     assert any(
-        "476141958109" in record.getMessage() or record.exc_info is not None
+        "123456789012" in record.getMessage() or record.exc_info is not None
         for record in caplog.records
     )
 

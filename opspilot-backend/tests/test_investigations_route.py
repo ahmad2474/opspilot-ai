@@ -48,9 +48,9 @@ def test_list_investigations_client_error_returns_sanitized_502(
     app/core/aws_errors.py's module docstring."""
     raw_message = (
         "An error occurred (AccessDeniedException) when calling the Scan "
-        "operation: User: arn:aws:iam::476141958109:user/opspilot-app is "
+        "operation: User: arn:aws:iam::123456789012:user/opspilot-app is "
         "not authorized to perform: dynamodb:Scan on resource: "
-        "arn:aws:dynamodb:us-east-1:476141958109:table/opspilot-investigations"
+        "arn:aws:dynamodb:us-east-1:123456789012:table/opspilot-investigations"
     )
     mock_list.side_effect = _client_error("AccessDeniedException", raw_message)
 
@@ -60,13 +60,13 @@ def test_list_investigations_client_error_returns_sanitized_502(
     assert response.status_code == 502
     body = response.json()
     detail = body["detail"]
-    assert "476141958109" not in detail
+    assert "123456789012" not in detail
     assert "arn:aws:iam" not in detail
     assert "AccessDeniedException" not in detail
     assert "opspilot-app" not in detail
 
     assert any(
-        "476141958109" in record.getMessage() or record.exc_info is not None
+        "123456789012" in record.getMessage() or record.exc_info is not None
         for record in caplog.records
     )
 

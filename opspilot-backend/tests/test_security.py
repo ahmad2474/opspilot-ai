@@ -7,6 +7,7 @@ requires ("the frontend redirect is not the only protection").
 from __future__ import annotations
 
 import time
+from unittest.mock import patch
 
 import jwt
 import pytest
@@ -106,7 +107,18 @@ def test_rejects_validly_signed_token_missing_sub_claim() -> None:
     assert response.status_code == 401
 
 
-def test_accepts_valid_token(auth_headers: dict[str, str]) -> None:
+@patch("app.api.routes.investigations.investigation_service.list_recent_investigations")
+def test_accepts_valid_token(
+    mock_list: object, auth_headers: dict[str, str]
+) -> None:
+    # This test only cares that a valid token reaches the route handler at
+    # all (200, not 401/403) — it must not depend on a real AWS call
+    # succeeding, per this codebase's own rule that every test mocks the
+    # boto3 client factory (see tests/test_investigations_route.py for the
+    # same pattern). Without this mock, the test only passed locally by
+    # accident whenever a real .env with real AWS credentials happened to be
+    # present — CI has none, so it correctly 502'd there instead of 200.
+    mock_list.return_value = []
     response = client.get("/investigations", headers=auth_headers)
     assert response.status_code == 200
 
