@@ -1,0 +1,67 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "OpspilotReadOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:Describe*",
+        "cloudwatch:GetMetricData",
+        "cloudwatch:GetMetricStatistics",
+        "cloudwatch:ListMetrics",
+        "cloudwatch:DescribeAlarms",
+        "lambda:GetFunction",
+        "lambda:ListFunctions",
+        "s3:ListAllMyBuckets",
+        "s3:GetBucketLocation",
+        "s3:ListBucket",
+        "dynamodb:ListTables",
+        "dynamodb:DescribeTable",
+        "sns:ListTopics",
+        "sns:ListSubscriptions",
+        "cloudtrail:LookupEvents",
+        "rds:DescribeDBInstances",
+        "elasticloadbalancing:Describe*",
+        "pricing:GetProducts",
+        "pricing:DescribeServices",
+        "elasticache:DescribeCacheClusters",
+        "sagemaker:ListEndpoints",
+        "sagemaker:DescribeEndpoint",
+        "sagemaker:DescribeEndpointConfig",
+        "redshift:DescribeClusters",
+        "apigateway:GET",
+        "cloudfront:ListDistributions",
+        "es:ListDomainNames",
+        "es:DescribeDomain",
+        "kinesis:ListStreams",
+        "kinesis:DescribeStreamSummary",
+        "sts:GetCallerIdentity"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "OpspilotInvestigationMemoryWrite",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:Scan"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:<YOUR_ACCOUNT_ID>:table/opspilot-investigations"
+    },
+    {
+      "Sid": "OpspilotMcpTokenAndAuditLog",
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:Query",
+        "dynamodb:Scan"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:<YOUR_ACCOUNT_ID>:table/opspilot-mcp-tokens",
+        "arn:aws:dynamodb:us-east-1:<YOUR_ACCOUNT_ID>:table/opspilot-audit-log"
+      ]
+    }
+  ]
+}

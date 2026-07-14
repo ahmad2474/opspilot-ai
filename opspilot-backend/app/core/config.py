@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
     gemini_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-flash-latest"
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     gemini_embedding_model: str = "gemini-embedding-001"
 
@@ -56,6 +56,33 @@ class Settings(BaseSettings):
 
     # --- Investigation memory (RAG) -------------------------------------
     opspilot_investigations_table: str = "opspilot-investigations"
+
+    # --- MCP token auth + audit log (Section 3.6) ------------------------
+    # Both DynamoDB, not Postgres -- see docs/BUILD_PROGRESS.md "Decisions
+    # made" (2026-07-11): this app has no Postgres infrastructure anywhere,
+    # DynamoDB is the only persistent datastore already in use
+    # (investigations table above), and stays inside the free tier at this
+    # single-admin scale. opspilot_mcp_tokens_table holds exactly one item
+    # (the current hashed token; "Generate" overwrites it, invalidating any
+    # previous token). opspilot_audit_log_table holds one item per
+    # generate/revoke event -- the narrow slice of Section 4's full audit
+    # log that this step is responsible for; Step 7 extends the same table/
+    # write path to cover every action type rather than building a second
+    # logging mechanism.
+    opspilot_mcp_tokens_table: str = "opspilot-mcp-tokens"
+    opspilot_audit_log_table: str = "opspilot-audit-log"
+
+    # --- Auth (Section 3.5) ---------------------------------------------
+    # Shared with the frontend's AUTH_SHARED_SECRET — used to verify the
+    # short-lived HS256 bearer token NextAuth mints on sign-in. This is the
+    # server-side session check; the frontend's /login redirect is not
+    # trusted as the security boundary on its own. Every non-health route
+    # requires a valid token (see app/core/security.py, wired in main.py).
+    auth_shared_secret: str | None = None
+    # Optional extra check: if set, the token's `sub` claim (the signed-in
+    # email) must match this exactly. Leave unset to accept any validly
+    # signed token (fine for true single-admin scope).
+    admin_email: str | None = None
 
     @property
     def cors_origins_list(self) -> list[str]:

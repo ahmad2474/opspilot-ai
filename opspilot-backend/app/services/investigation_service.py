@@ -7,9 +7,9 @@ demo account) a full table scan plus in-process cosine similarity is far
 simpler to operate than a real vector index, and costs nothing extra.
 
 Requires the `opspilot-app` IAM user to have dynamodb:PutItem and
-dynamodb:Scan on the investigations table — see AWS_ZeroSpend_Setup_Guide.md
-Section 4. Without it, save/find calls raise botocore.ClientError, which
-callers should treat as non-fatal (log and continue the chat turn).
+dynamodb:Scan on the investigations table. Without it, save/find calls
+raise botocore.ClientError, which callers should treat as non-fatal
+(log and continue the chat turn).
 """
 from __future__ import annotations
 

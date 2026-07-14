@@ -47,6 +47,94 @@ def test_list_instances_parses_response(mock_get_client: MagicMock) -> None:
 
 
 @patch("app.services.ec2_service.get_ec2_client")
+def test_list_instances_parses_relation_fields(mock_get_client: MagicMock) -> None:
+    """Roadmap 3.7 -- security_group_ids/subnet_id/vpc_id/attached_volume_ids
+    and the account-ID-stripped iam_instance_profile_name all come from
+    fields DescribeInstances already returns, just not previously mapped."""
+    mock_client = MagicMock()
+    mock_client.get_paginator.return_value = _fake_paginator(
+        [
+            {
+                "Reservations": [
+                    {
+                        "Instances": [
+                            {
+                                "InstanceId": "i-456",
+                                "InstanceType": "t3.micro",
+                                "State": {"Name": "running"},
+                                "Placement": {"AvailabilityZone": "us-east-1d"},
+                                "LaunchTime": datetime(2026, 7, 4, tzinfo=timezone.utc),
+                                "SecurityGroups": [
+                                    {"GroupId": "sg-1"},
+                                    {"GroupId": "sg-2"},
+                                ],
+                                "SubnetId": "subnet-123",
+                                "VpcId": "vpc-123",
+                                "IamInstanceProfile": {
+                                    "Arn": (
+                                        "arn:aws:iam::123456789012:instance-profile/"
+                                        "my-ec2-profile"
+                                    )
+                                },
+                                "BlockDeviceMappings": [
+                                    {"Ebs": {"VolumeId": "vol-1"}},
+                                    {"Ebs": {"VolumeId": "vol-2"}},
+                                    {"DeviceName": "no-ebs-here"},
+                                ],
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    )
+    mock_get_client.return_value = mock_client
+
+    instance = ec2_service.list_instances().instances[0]
+
+    assert instance.security_group_ids == ["sg-1", "sg-2"]
+    assert instance.subnet_id == "subnet-123"
+    assert instance.vpc_id == "vpc-123"
+    assert instance.attached_volume_ids == ["vol-1", "vol-2"]
+    # Security: only the bare profile name survives, never the ARN (which
+    # embeds the AWS account ID).
+    assert instance.iam_instance_profile_name == "my-ec2-profile"
+
+
+@patch("app.services.ec2_service.get_ec2_client")
+def test_list_instances_relation_fields_default_when_absent(mock_get_client: MagicMock) -> None:
+    mock_client = MagicMock()
+    mock_client.get_paginator.return_value = _fake_paginator(
+        [
+            {
+                "Reservations": [
+                    {
+                        "Instances": [
+                            {
+                                "InstanceId": "i-789",
+                                "InstanceType": "t3.micro",
+                                "State": {"Name": "running"},
+                                "Placement": {"AvailabilityZone": "us-east-1d"},
+                                "LaunchTime": datetime(2026, 7, 4, tzinfo=timezone.utc),
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    )
+    mock_get_client.return_value = mock_client
+
+    instance = ec2_service.list_instances().instances[0]
+
+    assert instance.security_group_ids == []
+    assert instance.subnet_id is None
+    assert instance.vpc_id is None
+    assert instance.attached_volume_ids == []
+    assert instance.iam_instance_profile_name is None
+
+
+@patch("app.services.ec2_service.get_ec2_client")
 def test_list_instances_empty_account(mock_get_client: MagicMock) -> None:
     mock_client = MagicMock()
     mock_client.get_paginator.return_value = _fake_paginator([{"Reservations": []}])

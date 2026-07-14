@@ -15,6 +15,33 @@ class EC2Instance(BaseModel):
     launch_time: datetime | None = None
     tags: dict[str, str] = Field(default_factory=dict)
 
+    # Roadmap 3.7 relation-shaping fields -- every one of these is already
+    # present in DescribeInstances' response, just not previously mapped
+    # into the model. No new AWS call; see scan_service.py's
+    # _relations_for() for how these turn into GalaxyResource.relations.
+    security_group_ids: list[str] = Field(default_factory=list)
+    subnet_id: str | None = None
+    vpc_id: str | None = None
+    iam_instance_profile_name: str | None = Field(
+        default=None,
+        description=(
+            "Just the trailing path segment of IamInstanceProfile.Arn (e.g. "
+            "'my-ec2-profile', not 'arn:aws:iam::123456789012:instance-profile/"
+            "my-ec2-profile') -- an instance *profile* name, not the underlying "
+            "role's name (resolving profile -> role would need a separate "
+            "iam:GetInstanceProfile call). Deliberately not the full ARN: "
+            "this app otherwise keeps the AWS account ID out of every "
+            "caller-facing field (it's scrubbed from error messages for the "
+            "same reason), and the roadmap 3.7 'assumes' relation only ever "
+            "needs an identifier to display, never the full ARN."
+        ),
+    )
+    attached_volume_ids: list[str] = Field(
+        default_factory=list,
+        description="EBS volume IDs from BlockDeviceMappings -- the EC2 side of the "
+        "EC2<->EBS 'attached' relation (roadmap 3.7).",
+    )
+
 
 class EC2InstanceList(BaseModel):
     instances: list[EC2Instance]

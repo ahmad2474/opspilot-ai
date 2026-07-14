@@ -22,7 +22,7 @@ export default function ReasoningTrace({ steps }: { steps: TraceStep[] }) {
   const toolCallCount = steps.filter((s) => s.type === "tool_call").length;
 
   return (
-    <div className="mt-2">
+    <div className="mt-2 min-w-0">
       <button
         onClick={() => setOpen((o) => !o)}
         className="font-mono text-[11px] text-muted transition-colors hover:text-accent"
@@ -42,7 +42,7 @@ export default function ReasoningTrace({ steps }: { steps: TraceStep[] }) {
             }
             if (step.type === "tool_call") {
               return (
-                <div key={i} className="text-accent">
+                <div key={i} className="break-words text-accent">
                   → {step.tool}({formatArgs(step.arguments)})
                 </div>
               );

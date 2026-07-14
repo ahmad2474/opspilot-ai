@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
 export default function RootPage() {
-  redirect("/chat");
+  // Galaxy is the default tab (roadmap Section 5's locked-in layout).
+  redirect("/galaxy");
 }

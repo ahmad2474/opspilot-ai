@@ -16,3 +16,9 @@ out/
 # --- OS / editor ---
 .DS_Store
 .vscode/
+
+# --- Dev-session artifacts ---
+*.log
+
+# --- Claude Code local settings (machine-specific, not for sharing) ---
+.claude/settings.local.json
