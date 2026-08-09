@@ -243,5 +243,5 @@ the feature it's auditing.
 ## 9. Responsible disclosure
 
 If you find a security issue in this project, please report it directly rather than opening a
-public issue: **zaryabbaloch04@gmail.com**. This is a personal/portfolio project without a formal
+public issue: **ahmad_warraich@outlook.com**. This is a personal/portfolio project without a formal
 bug-bounty program, but reports are genuinely welcome and will be looked at promptly.
