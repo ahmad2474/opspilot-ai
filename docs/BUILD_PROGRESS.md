@@ -2032,3 +2032,297 @@ stays done**, same category as the other post-ship fixes logged under it.
   most sensitive step (first AWS-mutating calls in this project) and must not be delegated on
   autopilot — the approval/dry-run UX needs to be confirmed with the user before any agent is
   assigned to it. Do not start this step until that conversation happens.
+- **Update, Phase 2 (2026-09-02): retired, not just paused.** `docs/opspilot-ai-roadmap-phase2.md`
+  Section 3.0 makes this a permanent decision, not a resumption point — replaced by a read-only
+  `check_deletion_impact` tool (planned, not yet built). The IAM policy stays
+  `Describe*`/`List*`/`Get*`/`pricing:*` forever, by design. See the Phase 2 section below.
+
+---
+
+# Phase 2
+
+Tracks `docs/opspilot-ai-roadmap-phase2.md` Section 6's build order. Build order agreed with the user
+(2026-09-02), deliberately reordered from the doc's own suggested sequence to front-load visible
+progress: **icons → Tier 3 waste checks → deletion-impact v1 → eval harness → deletion-impact v2
+(LangGraph) → release packaging.**
+
+| Step | Owner | Roadmap-phase2 sections | Status |
+|---|---|---|---|
+| Galaxy Dashboard AWS icons | `frontend-agent` | 1.5 | done |
+| Tier 3 waste-check expansion, Batch A | `backend-agent` | 1.1–1.4 | done |
+| Tier 3 waste-check expansion, Batch B (ECS/EKS, Savings Plan/RI, Compute Optimizer) | `backend-agent` | 1.2, 1.3 | not started |
+| Deletion-impact v1 (fixed-depth) | `backend-agent` | 3.0, 3.1 | not started |
+| Eval harness | `eval-agent` (new) | 2 | not started |
+| Deletion-impact v2 (adaptive-depth, LangGraph) | `langgraph-agent` (new) | 3.2, 3.3 | not started |
+| Public release packaging | `devops-agent` (new) | 4 | not started |
+
+## Subagent roster update
+Created three new agent definitions in `.claude/agents/`: `eval-agent.md` (sonnet — correctness-critical,
+same tier as `backend-agent`), `langgraph-agent.md` (opus — most architecturally novel of the three, new
+framework/dependency, real branching-depth design tradeoffs), `devops-agent.md` (haiku — most
+templated/mechanical, the setup wizard is largely already spec'd verbatim in the roadmap doc). Updated
+`orchestrator.md` with a Phase 2 delegation table and an explicit note that this Claude Code build does
+**not** expose `.claude/agents/*.md` files as invokable subagent types — every delegation in this project
+actually runs as a `general-purpose` dispatch with the target persona's Scope/Non-negotiables/Guardrails
+sections pasted into the prompt. This is a real environment limitation, not a one-off — don't rediscover
+it in a future session.
+
+## Galaxy Dashboard AWS icons (roadmap-phase2.md §1.5)
+- **Status: done.** Built by `frontend-agent` (stood in for by the orchestrating session directly, per
+  user permission — "even you can also do that task").
+- **Real gap found before building**: the roadmap doc assumed a per-type icon/legend system already
+  existed to "extend." It didn't — Phase 1 only ever built a per-*family* system (5 families, not 15
+  types). Going per-type was a genuine build, not a drop-in swap. Flagged to the user before proceeding.
+- **Design decision, user choice**: split by context rather than one icon style everywhere. Galaxy
+  stars/cluster nodes render the actual official AWS icon (replacing the old hand-drawn glyph entirely,
+  not just adding it alongside), inside a dark chip, with a colored ring around the chip carrying
+  idle/active/unknown status (AWS icons carry their own fixed brand colors, so status moved off the icon
+  itself onto the ring — user chose "ring/halo" over a corner badge or motion-only signal). A floor on
+  the chip's rendered size (`ICON_CHIP_MIN_SIZE`) keeps the cheapest/smallest resources' icons legible
+  rather than shrinking to an unrecognizable smudge, same problem the old hand-drawn glyphs didn't have.
+  Legend expanded from 5 family rows to all per-type icons, nested under the existing family toggle
+  headers (filter behavior itself stays family-granular, unchanged).
+- **Real judgment call, user choice, recorded like every other one in this file**: AWS's icon usage terms
+  explicitly authorize architecture diagrams/whitepapers/presentations/posters; they don't explicitly
+  address embedding icons as live product UI. Gray area, not a clear yes/no. **Decision: ship the icons
+  unmodified, add an explicit "not affiliated with, endorsed by, or sponsored by AWS" disclosure** at the
+  point of use (galaxy legend) and in `README.md`'s new "Trademark notice" section — a reasonable-faith
+  reading, not an explicit AWS blessing. Documented in `opspilot-frontend/public/aws-icons/NOTICE.md`
+  alongside exact source/version/per-icon provenance. Re-check before Phase 2's public-release step if
+  AWS revises its guidance in the meantime.
+- **`security_group` has no official AWS icon** in the current package (verified by searching the whole
+  downloaded asset set, not assumed) — falls back to a generic dashed-diamond placeholder glyph
+  (`NoIconGlyph`), labeled "(no official icon)" in the legend, same honesty pattern as `idle_since_is_estimated`
+  rather than fabricating one.
+- **Verified live**, not just built: a throwaway fixture backend (not committed) stood in for AWS
+  (no credentials on this machine) so the actual running app could be screenshotted end to end — stars,
+  pulsing idle rings, cluster view's infra-icon fallback, detail panel, and all three table views
+  (Galaxy, Idle Resources, Cost Overview) all confirmed rendering correctly against real component code.
+- **Reviews**: `code-reviewer`/`security-reviewer` ran together with the Tier 3 Batch A diff below (both
+  changesets were still uncommitted at review time) — see that section for results.
+
+## ADMIN_PASSWORD_HASH base64 hardening (unplanned, found during icon QA)
+- **Status: done.** Not a Phase 2 roadmap line item — a real bug hit while setting up a local test login
+  for the icon work above.
+- **What broke**: Next.js's built-in `.env` variable-expansion (`@next/env`, via `dotenv-expand`)
+  interprets a bare bcrypt hash's `$2b$10$...` segments as variable references, collapsing
+  `ADMIN_PASSWORD_HASH` to `""` unless every `$` is manually escaped as `\$`. This was **already known and
+  documented** in `opspilot-frontend/.env.local.example` (correct escaping guidance was already there) —
+  first reported back to the user as a new bug because a throwaway test `.env.local` was created from
+  scratch instead of copied from that example file. Corrected once caught; logged here as the actual
+  self-correction, not the false alarm.
+- **Fix, user choice** (offered "leave documented as-is" vs. "harden it" — user chose harden):
+  `ADMIN_PASSWORD_HASH` is now expected **base64-encoded**, decoded in
+  `opspilot-frontend/lib/auth.ts`'s new `decodeAdminPasswordHash()` before the bcrypt compare, with a
+  `$2[aby]$` prefix sanity check that logs a clear server-side error on a misconfigured value instead of
+  every login silently failing with no clue why. Removes the `$`-escaping foot-gun at its source — the
+  encoded value can never contain a literal `$` regardless of what hashing tool produced the underlying
+  hash. `.env.local.example` updated with a one-line hash-then-encode generation command.
+- **Live-verified**: generated a real random local admin password, hashed + base64-encoded it, wrote real
+  (gitignored) `.env.local`/`.env` files, and logged into the actual running app with those exact
+  credentials against the real code path — confirmed working, not just unit-tested.
+- **Flagged for `devops-agent`** (Section 4 setup wizard, not yet built): the roadmap doc's own reference
+  `scripts/setup.py` implementation writes the raw hash via `append_env` — it must base64-encode it
+  first now, or the wizard will silently produce a login nobody can use. Recorded in `devops-agent.md`'s
+  own scope section so this isn't rediscovered the hard way later.
+
+## Real AWS + LLM credentials connected (2026-09-02)
+- **Status: done.** First time this Phase 2 work has run against a real AWS account instead of a
+  fixture/mock backend. User provided a real AWS access key (existing `opspilot-app` IAM user,
+  account `<redacted>` — real account ID deliberately not recorded in this tracked doc, see
+  `docs/iam-policy.json`'s own `<YOUR_ACCOUNT_ID>` placeholder convention) and a real
+  `GROQ_API_KEY`, both written to `opspilot-backend/.env` (gitignored, never committed).
+- **Verified, not assumed**: `sts:GetCallerIdentity` confirms the key is live; `dynamodb:ListTables`
+  confirms all three required tables (`opspilot-investigations`, `opspilot-mcp-tokens`,
+  `opspilot-audit-log`) already exist from a prior setup. Gave the user the full updated
+  `docs/iam-policy.json` (account ID substituted) to paste over their existing policy in the AWS
+  console — **this is still a pending action on the user's side**, not yet confirmed applied. Until
+  they do, the six new Tier 3 IAM actions (S3 lifecycle/versioning/multipart, log retention, RDS
+  snapshots) may `AccessDenied`; everything from Phase 1 (the original 15 types) already works with
+  the pre-existing policy, confirmed by a real live scan (see below).
+- **Real bug found and fixed**: `GROQ_MODEL=llama-3.3-70b-versatile` (the config default and every
+  `.env`/`.env.example`) is dead — live-verified, a real completion call 404s with
+  `model_not_found`, and `GET /v1/models` with this key shows Groq's catalog no longer has *any*
+  plain Llama chat model. This is the same class of bug as the earlier Gemini model deprecation
+  (see that section above), just on the Groq side this time, and just as invisible until someone
+  actually tries to send a chat message.
+  - Investigated three replacement candidates properly (through the real running app, not just a
+    bare completion call) rather than picking the first thing that returned 200:
+    - `openai/gpt-oss-120b` — a single completion call succeeds, but under this app's actual
+      agentic tool-calling loop (a broad "what's idle in this account" question, which fans out
+      into multiple regions/tool calls), it drove into persistent `429 Too Many Requests` for
+      **6.5 minutes** before the request finally gave up with a `503`. Effectively broken for real
+      use on this account's free tier, despite looking fine in isolation.
+    - `qwen/qwen3.6-27b` — generous rate limit, but leaks its raw `<think>...</think>` reasoning
+      directly into the visible message content instead of a hidden channel — would show up as
+      literal text in the chat UI. Rejected on output-quality grounds.
+    - `groq/compound-mini` — much larger token budget, but flatly rejects tool-calling
+      (`` `tool calling` is not supported with this model ``) — a hard disqualifier for an app whose
+      entire agent loop *is* tool calls.
+  - **Chosen: `openai/gpt-oss-20b`.** Live-verified end to end through the real running app (real
+    AWS account, real Groq call, real reasoning-trace UI) — a single-tool-call question
+    ("List my S3 buckets") answered correctly in ~32s, including one transient 429 that resolved on
+    its own retry rather than compounding like 120b's did. Same hidden-reasoning-token behavior as
+    120b (harmless — nothing in this codebase sets a `max_tokens` low enough to get truncated by
+    it). Updated in three places: `app/core/config.py`'s default, `.env.example`, and the user's
+    live `.env`.
+  - **Flagged, not yet resolved**: a sufficiently broad multi-region investigation can still
+    occasionally hit a 429 on `gpt-oss-20b`'s free-tier budget — it retries and succeeds rather than
+    failing outright, but worth revisiting (e.g. a second LLM provider configured for fallback,
+    since `OPSPILOT_LLM_PRIMARY_PROVIDER` already supports groq→gemini→nvidia) if it proves too slow
+    under heavier real use.
+- **Live-verified with real data**: logged into the actual running app with real credentials, ran a
+  real (uncached) region scan — the galaxy view rendered real EC2/Lambda/DynamoDB/EBS resources
+  from the user's account with correct icons/status rings, confirming the Phase 2 icon work (above)
+  against real AWS, not just fixture data, for the first time. Redshift/Kinesis correctly failed
+  gracefully with `OptInRequired`/`SubscriptionRequiredException` (those services were never
+  activated on this account) and contributed 0 resources without blanking the rest of the scan —
+  expected behavior per the app's existing graceful-degradation design, not a bug.
+
+## Tier 3 waste-check expansion — Batch B (roadmap-phase2.md §1.2–1.3)
+- **Status: done — built, reviewed, and all findings fixed.** (First review pass hit a session rate
+  limit mid-run; both reviews were re-run clean from scratch afterward — see below.) Built by
+  `backend-agent` (general-purpose standing in, same as Batch A): ECS container idle detection,
+  Savings Plan/RI commitment analysis (Cost Explorer), Compute Optimizer rightsizing.
+- **New tools**: `check_container_idle(cluster, days, region=None)` + `list_clusters(region=None)`
+  (`app/services/ecs_service.py` — Fargate tasks only, EC2-launch-type ECS already covered by the
+  existing 15-type `check_idle`); `analyze_commitment_utilization(days=30)`
+  (`app/services/commitment_service.py` — the one place in this codebase using the *paid* Cost
+  Explorer API instead of the free Pricing API, cost surfaced on the response, not buried);
+  `get_rightsizing_recommendations(resource_type, region=None)`
+  (`app/services/compute_optimizer_service.py`, ec2/ebs/lambda/ecs). All three wired through
+  dashboard/MCP/chat per the usual rule. EKS explicitly excluded (needs Kubernetes-native metrics,
+  sequenced later).
+- **Real empirical finding**: live-verified IAM action names against the user's real AWS account
+  (same lesson as Batch A's S3 naming bugs — verify empirically, don't assume the action name
+  matches the boto3 method name). Found a genuine cross-service surprise:
+  `compute-optimizer:GetLambdaFunctionRecommendations` also requires `lambda:ListProvisionedConcurrencyConfigs`
+  — invisible from the API name alone, only discovered via a real `AccessDenied` naming the second
+  action. Added to `docs/iam-policy.json`. ECS/Cost-Explorer/EC2/EBS/ECS-recommendation action names
+  were confirmed correct as-is. Compute Optimizer's actual recommendation-object shapes and the
+  Container Insights metric unit/shape were **not** live-verifiable (no ECS clusters, no Compute
+  Optimizer enrollment, no Savings Plans/RIs exist in this account) — verified against botocore's
+  service model only, flagged as such.
+- **Tests**: 408/408 pass (373 prior + 35 new), `ruff check .` clean — per the building agent's own
+  report, **not yet independently re-verified by a reviewer** (see status above).
+- **Review status**:
+  - `security-reviewer`: first attempt failed mid-run (session rate limit, `HTTP 429`). Re-run from
+    scratch after a brief wait — **completed, two findings, both fixed**:
+    1. **The real AWS account ID was written verbatim into this file** (the "Real AWS + LLM
+       credentials connected" section above) — a tracked doc, unlike `.env`, and headed for a public
+       repo per the Phase 2 release-packaging step. Fixed: redacted to `<redacted>` in that section
+       (and here, in this very note — it isn't repeated anywhere in this file either), confirmed via
+       `git grep` there is no other occurrence anywhere in the repo. No actual
+       key/secret value was ever found in any diff, log, or test — this was the one piece of
+       real-account information that leaked through the empirical IAM-verification work, and only
+       into a doc, never into code.
+    2. **`docs/SECURITY.md` had gone stale**: it stated cost estimation "deliberately uses only the
+       Pricing API, not Cost Explorer" with no caveat — no longer true, since
+       `analyze_commitment_utilization` (this batch) deliberately calls four read-only Cost Explorer
+       commitment APIs (justified: commitment analysis fundamentally needs real billing data, which
+       cost transparently disclosed on every response via `estimated_cost_explorer_api_cost_usd`).
+       Fixed: added an explicit exception note to `SECURITY.md` §4.
+    - Everything else confirmed clean: IAM policy diff is exactly the 15 claimed read-only actions
+      (parsed programmatically, no wildcards/mutating verbs anywhere), new routes/MCP tools use the
+      identical auth gating as every other endpoint, no credential ever logged or leaked in code.
+  - `code-reviewer`: first attempt also failed mid-run (same rate limit). Re-run **completed, three
+    findings, all fixed**:
+    1. **Real correctness bug (the important one)**: ECS idle/over-provisioned detection was
+       averaging CPU/memory utilization across the whole window before computing one ratio —
+       exactly the failure mode `docs/opspilot-ai-roadmap.md` §3.1 names explicitly ("an average
+       can hide a burst on day 3 followed by idle days after") and exactly what
+       `idle_service.check_idle_via_metrics`'s per-day `_day_is_idle` discipline exists to prevent.
+       `ecs_service.py` didn't reuse that discipline and silently switched to an average-of-averages
+       instead. Fixed properly, not just documented: `idle_service._bucket_by_day` promoted to
+       public `bucket_by_day` (same helper-promotion pattern as `check_idle_via_metrics`/
+       `extract_usd_price` in earlier batches) and reused to compute a genuine per-day
+       utilized/reserved ratio; every idle/over-provisioned finding now requires **every day** in
+       the window below threshold (`_all_days_below`), never a window average. Reported percentage
+       switched from "the average" to "the worst (highest) day" — honest in a way an average isn't,
+       and it's literally the value that would have disqualified the verdict if too high. Added a
+       real regression test (`test_day_one_burst_prevents_false_idle_verdict`) proving a 90%-CPU day
+       1 followed by six idle days no longer produces a false idle finding — the exact scenario the
+       old averaging code would have gotten wrong. Task-vs-family granularity (the *other* ECS
+       judgment call) was independently confirmed well-handled by the reviewer — no change needed
+       there.
+    2. **Two new routes lacked the app's own established error-translation pattern**:
+       `/waste/commitment-utilization` and `/waste/rightsizing` had no catch-all exception handling,
+       unlike the precedent in `resources.py`'s `/resources/regions` (clean `HTTPException(502, ...)`
+       instead of leaking a raw exception as an unhandled 500). Fixed: both routes now match that
+       exact pattern.
+    3. **Test coverage gap on the `$10` coverage-gap floor**: the floor itself was already correctly
+       implemented (verified by the reviewer reading the code), just never exercised by a test proving
+       *suppression* below it — the existing test only covered the triggering case. Added
+       `test_coverage_gap_suppressed_below_min_on_demand_spend_floor`.
+    - Everything else confirmed clean: layering discipline, three-front-doors wiring, Compute
+      Optimizer pagination (terminates correctly, used uniformly), commitment finding category
+      separation (`waste` vs `opportunity` genuinely distinct in code and tested), cost-figure
+      distinctness, no dead code.
+  - **410/410 tests pass** (408 + 2 new regression tests), `ruff check .` clean — re-verified after
+    all three fixes, not just the building agent's original 408.
+  - **Batch B is now fully built, reviewed, and fixed.** Still nothing committed.
+
+## Tier 3 waste-check expansion — Batch A (roadmap-phase2.md §1.1–1.4)
+- **Status: done.** Built by `backend-agent`, in the doc's own cheapest-first order: CloudWatch Logs
+  retention, S3 waste findings, VPC Interface Endpoints, EBS/RDS snapshot sprawl. Deliberately excludes
+  ECS/EKS container idle, Savings Plan/RI utilization, and Compute Optimizer rightsizing — those need
+  account-level opt-ins or Cost Explorer's paid commitment APIs and are a separate "Batch B."
+- **New tools** (all reachable from dashboard API, MCP server, and chat agent — same three-front-doors
+  rule as every tool before them): `check_log_retention()`; `check_s3_waste(bucket, days, region=None)`
+  (returns a **findings list per bucket**, a structurally different shape from `check_idle`'s single
+  boolean — documented in `.claude/skills/data-schema/SKILL.md`); `list_vpc_endpoints()` /
+  `check_vpc_endpoint_idle(...)` / `estimate_vpc_endpoint_cost(...)`; `check_snapshot_sprawl(resource_type,
+  retention_days_or_count, retention_mode)` for EBS + RDS, with `retention_mode` a required parameter
+  (roadmap is explicit there's no universal "correct" retention default to hardcode).
+- **Real judgment call, flagged for review rather than silently decided**: VPC Interface Endpoints were
+  **not** folded into the existing 15-type `check_idle`/`estimate_cost` dispatcher — widening that surface
+  touches `scan_service`'s totals/TYPE_CODES, `resource_query_service`, and the chat prompt's type
+  enumerations, broader than this batch's scope. Instead, two of `idle_service`'s and two of
+  `cost_service`'s previously-private helpers were promoted to public (mechanical rename, all call sites
+  updated, full suite stayed green) so `vpc_endpoint_service.py` reuses the exact same pattern without
+  duplicating it. `code-reviewer` scrutinized this specific change closely (asked to, since it's the one
+  place a second opinion mattered) and found it clean.
+- **Deliberately skipped**: S3's "objects in Standard with no recent access" sub-check — the roadmap is
+  explicit this needs Storage Lens or Server Access Logging to measure honestly, and neither is guaranteed
+  enabled; skipped entirely rather than stubbed with a fabricated signal.
+- **Not live-verified**: no AWS credentials exist in this build environment, so the new Pricing API
+  attribute names used for S3 storage classes (`volumeType`) and VPC Endpoints
+  (`productFamily=VpcEndpoint`) are best-effort, flagged in both services' own docstrings, and unconfirmed
+  against a real `GetProducts` response. Verify these specific dollar figures against a real account
+  before trusting them for an actual bill.
+- **IAM**: `docs/iam-policy.json` gained exactly `rds:DescribeDBSnapshots`, `logs:DescribeLogGroups`,
+  `s3:GetBucketLifecycleConfiguration`, `s3:GetBucketVersioning`, `s3:ListMultipartUploads`,
+  `s3:ListMultipartUploadParts` — checked the existing policy first, the pre-existing `ec2:Describe*`
+  wildcard already covered `DescribeSnapshots`/`DescribeVpcEndpoints`.
+  - **Correction (2026-09-02, live-verified against the user's real AWS account after they applied
+    this policy)**: two of those four action names were wrong — AWS's actual IAM action names don't
+    always match the boto3 method name. `s3:GetBucketLifecycleConfiguration` doesn't exist as an IAM
+    action at all; the real one is **`s3:GetLifecycleConfiguration`** (confirmed via a real
+    `AccessDenied` naming the correct action). Likewise `s3:ListMultipartUploads` doesn't exist; the
+    real one is **`s3:ListBucketMultipartUploads`**. `s3:GetBucketVersioning` was correct as-is
+    (verified working). Fixed in `docs/iam-policy.json`; the user re-applied the corrected policy in
+    the AWS console. Worth remembering for any future S3 IAM action: verify the exact action name
+    empirically (a real `AccessDenied` error names the real required action) rather than assuming it
+    matches the boto3/API operation name.
+  - **Re-verified after the fix**: all five independently-testable actions confirmed working against
+    the user's real account with the corrected policy — `logs:DescribeLogGroups`,
+    `rds:DescribeDBSnapshots`, `s3:GetBucketVersioning`, `s3:GetLifecycleConfiguration`,
+    `s3:ListBucketMultipartUploads`. (`s3:ListMultipartUploadParts` was already correctly named and
+    needs an actual in-progress multipart upload to exercise directly — not re-tested, not a
+    concern.) **All six new Tier 3 IAM actions are now confirmed live and correct** — nothing left
+    pending on the IAM side.
+- **Tests**: 373/373 pass (339 pre-existing + 34 new), `ruff check .` clean — verified independently by
+  both `code-reviewer` and this session, not taken on the building agent's self-report.
+- **Reviews** (ran against this diff together with the icon work and the auth fix above, all three still
+  uncommitted at review time):
+  - `security-reviewer`: **clean, no findings.** IAM diff exactly matches the claim, no wildcard/mutating
+    grants; new `waste.py` routes gated behind the same `require_session` dependency as every other route;
+    new MCP tools go through the same class-level token-auth interceptor as existing ones; no secrets, no
+    write-capable calls anywhere.
+  - `code-reviewer`: **one finding, fixed.** The helper-promotion docstring in `cost_service.py` claimed
+    `s3_service` reused `extract_usd_price` — it didn't; `s3_service` had grown its own separate, private
+    duplicate (`_extract_usd_price_per_gb_month`) of the identical JSON-parsing logic, with a docstring
+    that itself (correctly) admitted it was a duplicate. Fixed by having `s3_service` actually import and
+    call `cost_service.extract_usd_price` and deleting the local duplicate (better than just correcting
+    the inaccurate comment, per the reviewer's own suggestion) — re-verified 373/373 passing, ruff clean,
+    after the fix. Everything else in both changesets: clean.

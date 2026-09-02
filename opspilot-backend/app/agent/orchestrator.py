@@ -16,12 +16,16 @@ from app.models.chat import TraceStep
 from app.services import investigation_service
 from app.tools.cloudtrail_tools import get_recent_account_activity, list_recent_ec2_activity
 from app.tools.cloudwatch_tools import get_ec2_cpu_utilization
+from app.tools.commitment_tools import analyze_commitment_utilization
+from app.tools.compute_optimizer_tools import get_rightsizing_recommendations
 from app.tools.cost_tools import estimate_cost
 from app.tools.dynamodb_tools import list_dynamodb_tables
 from app.tools.ec2_tools import get_ec2_status_check, list_ec2_instances
+from app.tools.ecs_tools import check_container_idle, list_ecs_clusters
 from app.tools.idle_tools import check_idle
 from app.tools.investigation_tools import find_similar_past_investigations
 from app.tools.lambda_tools import list_lambda_functions
+from app.tools.logs_tools import check_log_retention
 from app.tools.rds_tools import get_rds_status
 from app.tools.resource_query_tools import (
     estimate_instance_cost,
@@ -29,9 +33,15 @@ from app.tools.resource_query_tools import (
     get_resource_health,
     list_resources,
 )
-from app.tools.s3_tools import list_s3_buckets
+from app.tools.s3_tools import check_s3_waste, list_s3_buckets
 from app.tools.scan_tools import list_regions, scan_region
+from app.tools.snapshot_tools import check_snapshot_sprawl
 from app.tools.sns_tools import list_sns_topics
+from app.tools.vpc_endpoint_tools import (
+    check_vpc_endpoint_idle,
+    estimate_vpc_endpoint_cost,
+    list_vpc_endpoints,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +210,49 @@ AGENT_INSTRUCTIONS = (
     "compute-optimized like c5.2xlarge, a memory-optimized option like "
     "r5.xlarge) and present their monthly on-demand rates, then offer to narrow "
     "down further if the user gives you a specific size or workload.\n\n"
+    "For storage/lifecycle and account-level FinOps waste questions that aren't "
+    "about a single resource's idle window -- 'are any log groups keeping data "
+    "forever', 'check this S3 bucket for waste', 'do I have orphaned snapshots', "
+    "'is this VPC endpoint idle' -- use the matching tool instead of check_idle: "
+    "check_log_retention (no args, findings list of log groups with no retention "
+    "policy set, each with its real stored-byte size), check_s3_waste(bucket, days) "
+    "(findings list per bucket -- no lifecycle policy, stale incomplete multipart "
+    "uploads, versioning with no noncurrent-version expiration -- never a single "
+    "yes/no verdict), check_snapshot_sprawl(resource_type, retention_days_or_count, "
+    "retention_mode) for EBS/RDS snapshots (always ask the user for the retention "
+    "threshold first -- there is no universal correct value, never assume one), "
+    "and list_vpc_endpoints/check_vpc_endpoint_idle/estimate_vpc_endpoint_cost for "
+    "VPC Interface Endpoints (same is_idle/idle_since shape as check_idle, and same "
+    "projected_monthly/incurred_so_far shape as estimate_cost, just not part of the "
+    "15-type resource_type list check_idle/estimate_cost accept). These findings-"
+    "list tools return zero or more independent flags, not one boolean -- report "
+    "every finding present, don't collapse them into a single yes/no answer, and "
+    "use the paragraph-per-resource format above when a report has more than one "
+    "finding or covers more than one resource.\n\n"
+    "For ECS/Fargate container waste questions ('are any of my ECS tasks idle', "
+    "'is this cluster oversized'), use list_ecs_clusters to find a cluster name, "
+    "then check_container_idle(cluster, days) -- task-level findings (idle "
+    "utilization, over-provisioned tasks, standby-capacity services), not a single "
+    "verdict. It needs CloudWatch Container Insights enabled on the cluster; if "
+    "container_insights_enabled is false, relay the how-to-opt-in note plainly "
+    "instead of claiming there's no waste.\n\n"
+    "For Savings Plan / Reserved Instance questions ('am I using my savings plan', "
+    "'do I have good RI coverage'), use analyze_commitment_utilization -- and keep "
+    "its two finding categories distinct in your answer: 'waste' "
+    "(underutilized_savings_plan/underutilized_reservation -- money already spent "
+    "and wasted) versus 'opportunity' (savings_plan_coverage_gap/"
+    "reservation_coverage_gap -- on-demand spend a commitment could cover, but "
+    "nothing overspent today). Never call the second kind 'waste'. This tool calls "
+    "AWS's paid Cost Explorer API -- if asked whether running a check costs money, "
+    "mention this one does (a few cents per call), unlike every other tool here.\n\n"
+    "For rightsizing questions that are NOT about idle resources ('is this "
+    "instance oversized for its workload', 'what does AWS recommend for my Lambda "
+    "memory'), use get_rightsizing_recommendations(resource_type) -- one of ec2, "
+    "ebs, lambda, ecs. This is AWS Compute Optimizer's own ML-generated verdict, "
+    "not something this app computed -- present it as AWS's recommendation "
+    "('AWS Compute Optimizer reports...'), don't restate it as your own analysis. "
+    "If enrolled=false, relay the plain how-to-opt-in note -- never claim there are "
+    "no rightsizing opportunities when the account simply isn't enrolled.\n\n"
     "You cannot take any write/mutating action; if asked to change something, "
     "say so plainly.\n\n"
     "Formatting: the paragraph-per-resource format described above (bold name "
@@ -236,6 +289,16 @@ TOOLS = [
     get_resource_health,
     get_resource_age,
     estimate_instance_cost,
+    check_log_retention,
+    check_s3_waste,
+    list_vpc_endpoints,
+    check_vpc_endpoint_idle,
+    estimate_vpc_endpoint_cost,
+    check_snapshot_sprawl,
+    list_ecs_clusters,
+    check_container_idle,
+    analyze_commitment_utilization,
+    get_rightsizing_recommendations,
 ]
 
 

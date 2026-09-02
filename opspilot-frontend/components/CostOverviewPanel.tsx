@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { TYPE_LABEL } from "@/components/GalaxyView";
+import { TYPE_LABEL, StandaloneIcon, familyFor } from "@/components/GalaxyView";
 import RegionScanToolbar from "@/components/RegionScanToolbar";
 import { money } from "@/lib/format";
 import { useRegionScan } from "@/lib/useRegionScan";
@@ -120,7 +120,8 @@ export default function CostOverviewPanel() {
               {breakdown.map((row) => (
                 <div key={row.type} className="rounded-lg border border-border bg-surface p-3">
                   <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
-                    <span className="text-text">
+                    <span className="flex items-center gap-1.5 text-text">
+                      <StandaloneIcon type={row.type} family={familyFor(row.type)} size={14} />
                       {row.label} <span className="text-xs text-muted">×{row.count}</span>
                     </span>
                     <span className="font-mono text-text">{money(row.monthly)}/mo</span>
@@ -163,7 +164,12 @@ export default function CostOverviewPanel() {
                       <div className="text-text">{r.name}</div>
                       <div className="break-all font-mono text-[11px] text-muted">{r.id}</div>
                     </td>
-                    <td className="px-3 py-2 text-muted">{TYPE_LABEL[r.type] ?? r.type}</td>
+                    <td className="px-3 py-2 text-muted">
+                      <span className="flex items-center gap-1.5">
+                        <StandaloneIcon type={r.type} family={familyFor(r.type)} size={14} />
+                        {TYPE_LABEL[r.type] ?? r.type}
+                      </span>
+                    </td>
                     <td className="px-3 py-2 font-mono text-text">
                       {r.cost ? `${money(r.cost.projected_monthly)}/mo` : "unavailable"}
                     </td>

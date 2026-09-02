@@ -174,12 +174,143 @@ Non-galaxy types already live on the existing Overview dashboard (`s3`, `sns`, `
 are **not** part of this schema — S3/SNS are Tier 2 deferred (Section 2a), CloudTrail is an
 event log, not a cost-bearing resource. Don't add them to `TYPE_CODES`.
 
+## Findings-list tools (roadmap phase 2 Section 1) -- a second, distinct response shape
+
+Four Tier 3 waste checks landed in the same batch this section documents (`docs/
+opspilot-ai-roadmap-phase2.md` Section 1, "Batch A"). Three of them return a **findings list**
+-- a genuinely different shape from `IdleCheckResult`/`CostEstimate` above, not a variant of
+it. Don't force a findings-list tool's response into the `idle`/`cost` block shape, and don't
+build a new findings-list tool without documenting it here the same way.
+
+**Why the shape is different:** `IdleCheckResult`/`CostEstimate` answer one question per
+resource ("is it idle", "what does it cost") with one verdict. A findings-list tool instead
+asks "what's wrong with this resource/account, if anything" and can legitimately return zero,
+one, or several independent problems for the same resource at once -- there is no single
+boolean that could represent "this bucket has no lifecycle policy AND has stale multipart
+uploads AND has unbounded versioning" without losing information.
+
+- **`check_log_retention()`** (`services/logs_service.py`) -- no per-resource-ID input at all,
+  it's an account/region-wide sweep. Returns `LogRetentionReport { findings: [{ log_group_name,
+  stored_bytes, created_at }], flagged_count, total_log_groups_checked,
+  total_stored_bytes_at_risk }`. `findings` holds only log groups with **no** retention policy
+  set (`retentionInDays` absent) -- a group that has one configured never appears, flagged or
+  not. `stored_bytes` is real data from the same `DescribeLogGroups` call, not a boolean flag.
+
+- **`check_s3_waste(bucket, days=7)`** (`services/s3_service.py`) -- returns `S3WasteReport {
+  bucket, window_days, findings: [S3WasteFinding], storage_class_price_gap, checked_at }`.
+  `findings[].finding_type` is one of `no_lifecycle_policy` | `incomplete_multipart_uploads` |
+  `versioning_no_noncurrent_expiration` -- **zero to three** entries per bucket, never a single
+  `is_idle`-style verdict (this is the one the roadmap calls out explicitly: "a findings list,
+  not a single is_idle boolean"). `incomplete_multipart_uploads` findings carry a nested
+  `incomplete_uploads: [{ key, upload_id, initiated, age_days, estimated_bytes }]` list;
+  `estimated_bytes` is `null` (not a guessed number) if the `ListParts` sizing lookup failed for
+  that upload. `storage_class_price_gap` is a best-effort, nullable top-level field (a live
+  Pricing API lookup, S3 Standard vs. the coldest generally available tier) -- `null` means the
+  lookup failed, never a stale hardcoded number. Deliberately **not built**: an "objects with no
+  recent access" finding -- that needs S3 Storage Lens or Server Access Logging enabled to
+  measure honestly; skipped outright rather than shipped as a fabricated `idle_since`-style
+  claim (see `app/models/s3_waste.py`'s module docstring).
+
+- **`check_snapshot_sprawl(resource_type, retention_days_or_count, retention_mode="days")`**
+  (`services/snapshot_service.py`) -- `resource_type` is `"ebs"` or `"rds"`.
+  `retention_days_or_count` has **no default** in this app's own tool wrappers on purpose --
+  there is no universal "correct" retention count/age, callers (including the chat agent) must
+  always supply one. Returns `SnapshotSprawlReport { resource_type, retention_days_or_count,
+  retention_mode, findings: [SnapshotFinding], total_snapshots_checked, orphaned_count,
+  beyond_retention_count }`. `findings[].finding_type` is `orphaned` (source volume/instance no
+  longer exists) or `beyond_retention` (older than / past the Nth-most-recent cutoff for the
+  caller's threshold) -- **the same snapshot can appear twice**, once per finding_type, if it's
+  both; never conflated into one verdict.
+
+Three more Tier 3 tools landed in "Batch B" (`docs/opspilot-ai-roadmap-phase2.md` Sections
+1.2/1.3) -- one more findings-list tool, plus two genuinely new account-level shapes that
+aren't findings-list tools at all:
+
+- **`check_container_idle(cluster, days)`** (`services/ecs_service.py`) -- a findings-list
+  tool, same shape family as the three above. Returns `EcsContainerIdleReport { cluster,
+  window_days, container_insights_enabled, container_insights_note, findings:
+  [EcsContainerFinding], total_tasks_checked, total_services_checked }`.
+  `container_insights_enabled` is read directly from the cluster's own `containerInsights`
+  setting (`DescribeClusters include=['SETTINGS']`) -- **not** inferred by making a metrics
+  call and catching a failure, unlike this app's Redshift/Kinesis account-level opt-in
+  handling. `False` (cluster not found, or Container Insights disabled) means `findings` is
+  always `[]` and `container_insights_note` explains why (a how-to-opt-in message, or "cluster
+  not found") -- never a fabricated finding or an unhandled exception. `findings[].finding_type`
+  is `task_idle_utilization` | `task_over_provisioned` | `service_standby_capacity` -- the same
+  cluster can carry all three independently. **Real caveat, worth internalizing before touching
+  this tool**: standard (non-"enhanced") CloudWatch Container Insights for ECS does not publish
+  metrics per individual running task ARN -- it aggregates at the `TaskDefinitionFamily` level
+  within a cluster. "Task-level, not cluster-level" (roadmap's own framing) is implemented as
+  "per running task, using its task-definition family's utilization" -- finer than a
+  cluster-wide average, but not literally per-task-ARN (see `app/models/ecs.py`'s module
+  docstring). Scoped to **Fargate tasks only** for the idle/over-provisioned sub-checks (EC2-launch-type
+  ECS tasks run on EC2 instances this app already idle-checks separately via
+  `check_idle(resource_type="ec2", ...)` -- checking them again here would double-count the
+  same waste signal). `list_ecs_clusters()` is a new standalone discovery tool (mirrors
+  `list_vpc_endpoints()`) since `check_container_idle` needs a `cluster` name as input.
+
+- **`analyze_commitment_utilization(days=30)`** (`services/commitment_service.py`) --
+  genuinely account-level, no resource_id or findings-per-resource shape at all. Returns
+  `CommitmentAnalysisReport { period_start, period_end, savings_plans_utilization,
+  savings_plans_coverage, reservation_utilization, reservation_coverage, findings:
+  [CommitmentFinding], cost_explorer_api_requests_made, estimated_cost_explorer_api_cost_usd,
+  note }`. The four summary fields are independently nullable -- `null` means that one Cost
+  Explorer call failed (a real permission/outage problem), **not** "the account has no
+  commitments" (an account with zero Savings Plans/RIs still gets a populated summary with
+  zeroed numbers, since that's a valid, non-error API response). `findings[].category` is the
+  one thing every consumer of this tool must get right: `"waste"` (`underutilized_savings_plan`/
+  `underutilized_reservation` -- money already spent and not used, the same sense as every other
+  waste check in this app) versus `"opportunity"` (`savings_plan_coverage_gap`/
+  `reservation_coverage_gap` -- paying on-demand for usage a commitment *could* cover, but
+  nothing has actually been overspent) -- **never present a coverage finding as if it were
+  waste**. This is the one tool in the whole Tier 3 scope that calls AWS Cost Explorer's PAID
+  commitment APIs (`GetSavingsPlansUtilization`/`GetSavingsPlansCoverage`/
+  `GetReservationUtilization`/`GetReservationCoverage`, always 4 requests per call) instead of
+  the free Pricing/Describe*/List* APIs everything else uses -- `estimated_cost_explorer_api_cost_usd`
+  and `note` surface this directly on the response, not just in a docstring, per the roadmap's
+  explicit instruction to flag it.
+
+- **`get_rightsizing_recommendations(resource_type)`** (`services/compute_optimizer_service.py`)
+  -- `resource_type` is one of `ec2` | `ebs` | `lambda` | `ecs` (ECS-on-Fargate). Not a
+  self-computed idle/waste check at all -- it's a thin pass-through of AWS Compute Optimizer's
+  own ML-generated recommendations, the one tool in this app whose findings are AWS-generated
+  rather than derived from a CloudWatch threshold this app picked. Returns `RightsizingReport {
+  resource_type, enrolled, findings: [RightsizingFinding], total_checked, note }`.
+  `enrolled=False` means this AWS account hasn't opted into Compute Optimizer yet (a one-time,
+  account-level activation, same shape as Redshift/Kinesis's service opt-in) -- caught via the
+  real `OptInRequiredException` the boto3 `compute-optimizer` client raises, never an unhandled
+  exception; `findings` is then always `[]` and `note` carries a plain how-to-opt-in message.
+  `findings` excludes every resource AWS's own `finding` field already reports as `"Optimized"`
+  -- an already-optimal resource isn't a finding. Each finding surfaces only the *top-ranked*
+  (`rank=1`) recommendation option, not the full ranked list, to keep the shape flat and
+  comparable across all four resource types.
+
+**VPC Interface Endpoints are the one Tier 3 addition that does NOT get a new findings-list
+shape** -- `check_vpc_endpoint_idle(vpc_endpoint_id, days)` and
+`estimate_vpc_endpoint_cost(vpc_endpoint_id)` (`services/vpc_endpoint_service.py`) return the
+existing `IdleCheckResult`/`CostEstimate` models unchanged, with `resource_type="vpc_endpoint"`.
+A deliberate scope call worth recording here: `vpc_endpoint` is **not** added as a 16th value to
+`idle_service.check_idle`/`cost_service.estimate_cost`'s shared dispatcher, and is **not** part
+of `scan_region`'s 15-type sweep or the `TYPE_CODES` table above -- widening that fixed 15-type
+surface (`scan_service`'s totals aggregation, `resource_query_service`, the chat agent's prompt
+enumerations) is a broader change than this one check, out of scope for this batch. The same
+CloudWatch-window-idle/Pricing-API-cost *pattern* is reused via two small, formerly-private
+helpers promoted to public specifically for this reuse:
+`idle_service.check_idle_via_metrics`/`not_idle_result` and
+`cost_service.extract_usd_price`/`elapsed_hours`. `list_vpc_endpoints()` is a new standalone
+lookup tool (mirrors `list_s3_buckets`) since, unlike NAT Gateway, there is no existing
+inventory surface (`scan_region`) a caller could otherwise use to discover a `vpc_endpoint_id`.
+If a future change does fold `vpc_endpoint` into the 15-type surface, update this section and
+the `TYPE_CODES` table together in the same change.
+
 ## Who produces/consumes what
 
 - **`backend-agent`** is the sole producer: every new tool/service (`check_idle`,
-  `estimate_cost`, region scan, and the chat tools in 3.8) returns data conforming to
-  `GalaxyResource`/the scan response above — extend this file first if a new field is needed,
-  don't let two tools drift into slightly different shapes for the same concept.
+  `estimate_cost`, region scan, the chat tools in 3.8, and the findings-list waste checks above)
+  returns data conforming to `GalaxyResource`/the scan response, or to the documented
+  findings-list shape for a findings-list tool — extend this file first if a new field or a new
+  findings-list tool is needed, don't let two tools drift into slightly different shapes for the
+  same concept.
 - **`frontend-agent`** is the sole consumer for the galaxy/cluster UI — maps this schema into
   whatever local rendering shape (`x`/`y` layout, etc.) the component needs, but the
   fetch/response boundary matches this file exactly.

@@ -176,6 +176,15 @@ def get_kinesis_client(region: str | None = None) -> Any:
     return _client("kinesis", region)
 
 
+def get_logs_client(region: str | None = None) -> Any:
+    """CloudWatch Logs -- used by logs_service.check_log_retention (roadmap
+    phase 2 Section 1.3). A distinct service/client from `cloudwatch`
+    (metrics) above -- DescribeLogGroups is a Logs API call, not a
+    CloudWatch metrics call.
+    """
+    return _client("logs", region)
+
+
 def get_sts_client() -> Any:
     """STS -- used only by app/services/account_service.py to resolve the
     connected AWS account ID for the Settings tab's "connected account"
@@ -185,6 +194,46 @@ def get_sts_client() -> Any:
     account currently configured," never a per-scan-region identity.
     """
     return _client("sts")
+
+
+def get_ecs_client(region: str | None = None) -> Any:
+    """Elastic Container Service -- used by ecs_service.check_container_idle
+    (roadmap phase 2 Section 1.2, "Batch B"). Regionalized like every other
+    compute service in this file; `region` overrides the configured
+    default, same convention as get_rds_client/get_lambda_client etc.
+    """
+    return _client("ecs", region)
+
+
+def get_ce_client() -> Any:
+    """AWS Cost Explorer -- used by
+    commitment_service.analyze_commitment_utilization (roadmap phase 2
+    Section 1.3, "Batch B"). Like get_pricing_client() above, Cost Explorer
+    has a single global endpoint hardcoded to us-east-1 regardless of
+    get_settings().aws_region -- confirmed via botocore's endpoints.json
+    (`ce`'s partition entry is `"isRegionalized": false`,
+    `"partitionEndpoint": "aws-global"`, hostname `ce.us-east-1.amazonaws.com`),
+    not assumed. Unlike every Describe*/List*/Get* call elsewhere in this
+    app, Cost Explorer's commitment calls
+    (GetSavingsPlansUtilization/GetSavingsPlansCoverage/
+    GetReservationUtilization/GetReservationCoverage) each carry a small
+    per-request USD cost -- see commitment_service.py's module docstring.
+    """
+    with _client_creation_lock:
+        return _session().client("ce", region_name="us-east-1")
+
+
+def get_compute_optimizer_client(region: str | None = None) -> Any:
+    """AWS Compute Optimizer -- used by
+    compute_optimizer_service.get_rightsizing_recommendations (roadmap
+    phase 2 Section 1.3, "Batch B"). Regionalized (confirmed via botocore's
+    endpoints.json -- a real per-region endpoint, unlike Cost Explorer/
+    Pricing above), same region-override convention as every other
+    get_*_client() in this file. Requires a one-time account-level opt-in
+    (same pattern as Redshift/Kinesis) -- see compute_optimizer_service.py's
+    module docstring for how an un-enrolled account is handled gracefully.
+    """
+    return _client("compute-optimizer", region)
 
 
 def get_pricing_client() -> Any:

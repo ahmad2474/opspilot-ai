@@ -123,6 +123,14 @@ added — reproduced in summary here:
   request) and the more conservative one from a scope perspective (list-price estimates, not
   billed-cost lookups tied to your actual spend), and is labeled as such in the UI (see roadmap
   Section 3.2).
+  - **One deliberate exception (Phase 2 Tier 3, roadmap-phase2.md Section 1.3)**:
+    `analyze_commitment_utilization` calls four *read-only* Cost Explorer commitment APIs
+    (`GetSavingsPlansUtilization`/`GetSavingsPlansCoverage`/`GetReservationUtilization`/
+    `GetReservationCoverage`) — commitment analysis fundamentally requires real billing data, which
+    the Pricing API can't provide. This is the one tool in the whole app where a call costs real
+    money per request; every response surfaces `estimated_cost_explorer_api_cost_usd` and
+    `cost_explorer_api_requests_made` explicitly rather than hiding it, same disclosure discipline
+    as everything else on this page.
 - **Cross-account role assumption** (a second, separate control from Section 3's IAM keys — the
   roadmap's "external ID per connection" requirement) does not apply yet: multi-account support is
   explicitly deferred (roadmap Section 2/8), so there is no cross-account trust relationship to

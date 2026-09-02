@@ -19,12 +19,13 @@ client (e.g. Claude Desktop) over a token-authenticated Model Context Protocol s
 
 ## What it does
 
-- **Galaxy dashboard.** Every resource in the selected region rendered as a star — sized by
-  projected monthly cost, colored by idle status (cyan = active, pulsing amber = idle 7+ days),
-  grouped by family with a toggleable icon legend. Stars are draggable for a more explorable,
-  "alive" layout. Click a star for a detail panel; click "View connections" to re-center into a
-  bubble-map cluster showing that resource's related infrastructure (security group, subnet, VPC,
-  IAM role, attached volumes) — answers "if I terminate this, what else is affected?"
+- **Galaxy dashboard.** Every resource in the selected region rendered as a star — its official AWS
+  service icon, sized by projected monthly cost, ringed by idle status (cyan = active, pulsing
+  amber = idle 7+ days), grouped by family with a toggleable icon legend. Stars are draggable for a
+  more explorable, "alive" layout. Click a star for a detail panel; click "View connections" to
+  re-center into a bubble-map cluster showing that resource's related infrastructure (security
+  group, subnet, VPC, IAM role, attached volumes) — answers "if I terminate this, what else is
+  affected?"
 - **All 15 in-scope AWS resource types**, one consistent `check_idle`/`estimate_cost` pattern per
   type: EC2, EBS, RDS, Elastic IP, ELB, Lambda, NAT Gateway, DynamoDB, ElastiCache, SageMaker
   endpoints, Redshift, API Gateway, CloudFront, OpenSearch, Kinesis.
@@ -148,6 +149,12 @@ pytest -v
 ```
 Every test mocks the boto3 client factory directly — no AWS credentials or LLM API keys needed to
 run the suite.
+
+## Trademark notice
+
+The galaxy dashboard, its legend, and the resource-type tables use AWS's official Architecture
+Icons (unmodified, sourced per `opspilot-frontend/public/aws-icons/NOTICE.md`). **OpsPilot AI is
+an independent project, not affiliated with, endorsed by, or sponsored by Amazon Web Services.**
 
 ## Known limitations & accepted risks
 

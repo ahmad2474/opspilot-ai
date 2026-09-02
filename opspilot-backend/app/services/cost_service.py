@@ -23,7 +23,7 @@ computed from a documented constant rather than a Pricing API call, and
 DynamoDB-provisioned is priced per RCU/WCU-hour): every *instance/capacity-
 hour* type still reports an `hourly_rate` in CostEstimate by computing an
 *effective* hourly rate, so the same elapsed-hours-based incurred_so_far
-logic (`_elapsed_hours`) works unchanged across all of them without a
+logic (`elapsed_hours`) works unchanged across all of them without a
 parallel cost model per type.
 
 Usage-based types (Lambda, DynamoDB on-demand, API Gateway, CloudFront) do
@@ -197,13 +197,16 @@ def _get_ec2_hourly_rate(instance_type: str, region: str) -> float:
             f"Pricing API returned no on-demand price for instance_type={instance_type!r} "
             f"region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
-def _extract_usd_price(price_list: list[str]) -> float:
+def extract_usd_price(price_list: list[str]) -> float:
     """Shared PriceList[0] -> USD-per-unit parsing, reused by every
     GetProducts caller below (EC2, RDS, EBS, ELB) so the on-demand-terms
-    JSON navigation lives in exactly one place.
+    JSON navigation lives in exactly one place. Public (no leading
+    underscore) on purpose -- s3_service's storage-class price-gap lookup
+    and vpc_endpoint_service's hourly-rate lookup (roadmap phase 2 Section
+    1) reuse this exact JSON-parsing rather than duplicating it.
     """
     product = json.loads(price_list[0])
     on_demand_terms = product["terms"]["OnDemand"]
@@ -269,7 +272,7 @@ def _get_rds_hourly_rate(instance_class: str, engine: str, region: str) -> float
             f"Pricing API returned no on-demand price for instance_class={instance_class!r} "
             f"engine={engine!r} region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
 def _get_ebs_gb_month_rate(volume_type: str, region: str) -> float:
@@ -295,7 +298,7 @@ def _get_ebs_gb_month_rate(volume_type: str, region: str) -> float:
             f"Pricing API returned no GB-month price for volume_type={volume_type!r} "
             f"region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
 # elbv2 lb_type -> Pricing API productFamily. Classic ELB's productFamily
@@ -330,7 +333,7 @@ def _get_elb_hourly_rate(lb_type: str, region: str) -> float:
         raise ValueError(
             f"Pricing API returned no on-demand price for lb_type={lb_type!r} region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
 def _get_nat_gateway_hourly_rate(region: str) -> float:
@@ -352,7 +355,7 @@ def _get_nat_gateway_hourly_rate(region: str) -> float:
         raise ValueError(
             f"Pricing API returned no on-demand price for NAT Gateway region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
 def _get_elasticache_hourly_rate(node_type: str, engine: str, region: str) -> float:
@@ -378,7 +381,7 @@ def _get_elasticache_hourly_rate(node_type: str, engine: str, region: str) -> fl
             f"Pricing API returned no on-demand price for node_type={node_type!r} "
             f"engine={engine!r} region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
 def _get_sagemaker_hourly_rate(instance_type: str, region: str) -> float:
@@ -402,7 +405,7 @@ def _get_sagemaker_hourly_rate(instance_type: str, region: str) -> float:
             f"Pricing API returned no on-demand price for instance_type={instance_type!r} "
             f"region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
 def _get_redshift_hourly_rate(node_type: str, region: str) -> float:
@@ -422,7 +425,7 @@ def _get_redshift_hourly_rate(node_type: str, region: str) -> float:
             f"Pricing API returned no on-demand price for node_type={node_type!r} "
             f"region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
 def _get_opensearch_hourly_rate(instance_type: str, region: str) -> float:
@@ -447,13 +450,15 @@ def _get_opensearch_hourly_rate(instance_type: str, region: str) -> float:
             f"Pricing API returned no on-demand price for instance_type={instance_type!r} "
             f"region={region!r}"
         )
-    return _extract_usd_price(price_list)
+    return extract_usd_price(price_list)
 
 
-def _elapsed_hours(launch_time: datetime | None, date_range: DateRange) -> float:
+def elapsed_hours(launch_time: datetime | None, date_range: DateRange) -> float:
     """Hours actually elapsed within date_range, capped at the resource's
     own age (launch_time) if it's younger than date_range.start, and
-    capped at "now" if date_range.end is in the future.
+    capped at "now" if date_range.end is in the future. Public on purpose
+    -- vpc_endpoint_service.estimate_vpc_endpoint_cost (roadmap phase 2
+    Section 1.1) reuses this directly rather than duplicating it.
     """
     effective_start = date_range.start
     if launch_time is not None and launch_time > effective_start:
@@ -632,7 +637,7 @@ def _estimate_cost_ec2(
     hourly_rate = _get_ec2_hourly_rate(instance.instance_type, region)
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(instance.launch_time, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(instance.launch_time, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -664,7 +669,7 @@ def _estimate_cost_ebs(
     hourly_rate = monthly_cost / HOURS_PER_MONTH
 
     projected_monthly = round(monthly_cost, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(volume.create_time, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(volume.create_time, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -693,7 +698,7 @@ def _estimate_cost_rds(
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
     incurred_so_far = round(
-        hourly_rate * _elapsed_hours(instance.instance_create_time, date_range), 2
+        hourly_rate * elapsed_hours(instance.instance_create_time, date_range), 2
     )
 
     return CostEstimate(
@@ -732,7 +737,7 @@ def _estimate_cost_eip(
     hourly_rate = 0.0 if address.is_associated else EIP_IDLE_HOURLY_RATE_USD
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(None, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(None, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -760,7 +765,7 @@ def _estimate_cost_elb(
     hourly_rate = _get_elb_hourly_rate(lb.lb_type, region)
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(lb.created_time, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(lb.created_time, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -809,7 +814,7 @@ def _estimate_cost_lambda(
     )
 
     incurred_so_far = round(invocations * price_per_invocation, 2)
-    hours_elapsed = max(_elapsed_hours(None, date_range), 1.0 / 24.0)
+    hours_elapsed = max(elapsed_hours(None, date_range), 1.0 / 24.0)
     daily_invocations = invocations / (hours_elapsed / 24.0)
     projected_monthly = round(daily_invocations * 30.0 * price_per_invocation, 2)
 
@@ -842,7 +847,7 @@ def _estimate_cost_nat_gateway(
     hourly_rate = _get_nat_gateway_hourly_rate(region)
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(gateway.create_time, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(gateway.create_time, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -885,7 +890,7 @@ def _estimate_cost_dynamodb_provisioned(
     )
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
     incurred_so_far = round(
-        hourly_rate * _elapsed_hours(table.creation_date_time, date_range), 2
+        hourly_rate * elapsed_hours(table.creation_date_time, date_range), 2
     )
     return CostEstimate(
         resource_id=table.name,
@@ -914,7 +919,7 @@ def _estimate_cost_dynamodb_on_demand(
         + write_units * DYNAMODB_ON_DEMAND_WRU_PRICE_USD,
         2,
     )
-    hours_elapsed = max(_elapsed_hours(table.creation_date_time, date_range), 1.0 / 24.0)
+    hours_elapsed = max(elapsed_hours(table.creation_date_time, date_range), 1.0 / 24.0)
     daily_read = read_units / (hours_elapsed / 24.0)
     daily_write = write_units / (hours_elapsed / 24.0)
     projected_monthly = round(
@@ -955,7 +960,7 @@ def _estimate_cost_elasticache(
     hourly_rate = node_hourly_rate * max(cluster.num_cache_nodes, 1)
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(cluster.create_time, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(cluster.create_time, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -992,7 +997,7 @@ def _estimate_cost_sagemaker(
     hourly_rate = instance_hourly_rate * max(endpoint.instance_count, 1)
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(endpoint.creation_time, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(endpoint.creation_time, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -1021,7 +1026,7 @@ def _estimate_cost_redshift(
     hourly_rate = node_hourly_rate * max(cluster.number_of_nodes, 1)
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(cluster.create_time, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(cluster.create_time, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -1051,7 +1056,7 @@ def _estimate_cost_api_gateway(
         "AWS/ApiGateway", "Count", "ApiName", api.name, date_range, region=region
     )
     incurred_so_far = round(requests * API_GATEWAY_PRICE_PER_REQUEST_USD, 2)
-    hours_elapsed = max(_elapsed_hours(api.created_date, date_range), 1.0 / 24.0)
+    hours_elapsed = max(elapsed_hours(api.created_date, date_range), 1.0 / 24.0)
     daily_requests = requests / (hours_elapsed / 24.0)
     projected_monthly = round(daily_requests * 30.0 * API_GATEWAY_PRICE_PER_REQUEST_USD, 2)
 
@@ -1094,7 +1099,7 @@ def _estimate_cost_cloudfront(
     incurred_so_far = round(
         (requests / 10_000.0) * CLOUDFRONT_PRICE_PER_10K_REQUESTS_USD, 2
     )
-    hours_elapsed = max(_elapsed_hours(None, date_range), 1.0 / 24.0)
+    hours_elapsed = max(elapsed_hours(None, date_range), 1.0 / 24.0)
     daily_requests = requests / (hours_elapsed / 24.0)
     projected_monthly = round(
         ((daily_requests * 30.0) / 10_000.0) * CLOUDFRONT_PRICE_PER_10K_REQUESTS_USD, 2
@@ -1131,7 +1136,7 @@ def _estimate_cost_opensearch(
     hourly_rate = node_hourly_rate * max(domain.instance_count, 1)
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
-    incurred_so_far = round(hourly_rate * _elapsed_hours(None, date_range), 2)
+    incurred_so_far = round(hourly_rate * elapsed_hours(None, date_range), 2)
 
     return CostEstimate(
         resource_id=resource_id,
@@ -1162,7 +1167,7 @@ def _estimate_cost_kinesis(
 
     projected_monthly = round(hourly_rate * HOURS_PER_MONTH, 2)
     incurred_so_far = round(
-        hourly_rate * _elapsed_hours(stream.creation_timestamp, date_range), 2
+        hourly_rate * elapsed_hours(stream.creation_timestamp, date_range), 2
     )
 
     return CostEstimate(

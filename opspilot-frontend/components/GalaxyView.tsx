@@ -31,6 +31,15 @@ const DRAG_CLICK_THRESHOLD_PX = 5;
 // window. Don't swap this for `idle.is_idle`.
 const IDLE_PULSE_THRESHOLD_DAYS = 7;
 
+// Roadmap Section 1.5: floor for a node's icon-chip radius (SVG viewBox
+// units, same space as radiusFor()'s [1.1, 4.6] clamp). Official AWS icons
+// are far more detailed than the old hand-drawn Glyph shapes, so the
+// cheapest resources -- which used to shrink Glyph down to radiusFor()'s
+// own 1.1 floor -- need a taller floor here or their icon just turns into
+// an unrecognizable smudge. Chosen empirically (roughly 2x the old Glyph
+// floor); revisit if real scan data at the low end still looks muddy.
+const ICON_CHIP_MIN_SIZE = 2.4;
+
 // Exported (Family, TYPE_LABEL) so other resource-list views built off the
 // same scan data -- components/IdleResourcesPanel.tsx,
 // components/CostOverviewPanel.tsx -- can reuse this one 15-entry type-label
@@ -68,6 +77,17 @@ const FAMILY_LABEL: Record<Family, string> = {
 
 const ALL_FAMILIES: Family[] = ["compute", "storage", "database", "networking", "streaming"];
 
+// Precomputed inverse of TYPE_FAMILY (family -> its type keys, in
+// TYPE_FAMILY's own declared order), so the legend's per-type icon rows
+// (Section 1.5) don't re-filter Object.keys(TYPE_FAMILY) on every render.
+const TYPE_FAMILY_KEYS_BY_FAMILY: Record<Family, string[]> = ALL_FAMILIES.reduce(
+  (acc, f) => {
+    acc[f] = Object.keys(TYPE_FAMILY).filter((t) => TYPE_FAMILY[t] === f);
+    return acc;
+  },
+  {} as Record<Family, string[]>
+);
+
 export const TYPE_LABEL: Record<string, string> = {
   ec2: "EC2 Instance",
   ebs: "EBS Volume",
@@ -84,6 +104,47 @@ export const TYPE_LABEL: Record<string, string> = {
   cloudfront: "CloudFront Distribution",
   opensearch: "OpenSearch Domain",
   kinesis: "Kinesis Stream",
+};
+
+// Roadmap Section 1.5 (Galaxy Dashboard AWS icons): official AWS
+// Architecture Icons, one per TYPE_LABEL key, pulled from AWS's published
+// icon package and stored under public/aws-icons/ (see that directory's
+// NOTICE file for source/version and usage-guideline notes). Every
+// currently-supported cost-bearing type has an official icon -- this map
+// is intentionally NOT given a fallback default here; StandaloneIcon/
+// ResourceIcon below check for a missing entry explicitly and fall back to
+// the hand-drawn Glyph instead, the same "don't fabricate, say so" pattern
+// the backend already uses for things like idle_since_is_estimated.
+export const TYPE_ICON: Record<string, string> = {
+  ec2: "/aws-icons/ec2.svg",
+  lambda: "/aws-icons/lambda.svg",
+  sagemaker: "/aws-icons/sagemaker.svg",
+  ebs: "/aws-icons/ebs.svg",
+  rds: "/aws-icons/rds.svg",
+  dynamodb: "/aws-icons/dynamodb.svg",
+  elasticache: "/aws-icons/elasticache.svg",
+  redshift: "/aws-icons/redshift.svg",
+  opensearch: "/aws-icons/opensearch.svg",
+  elb: "/aws-icons/elb.svg",
+  nat_gateway: "/aws-icons/nat_gateway.svg",
+  eip: "/aws-icons/eip.svg",
+  api_gateway: "/aws-icons/api_gateway.svg",
+  cloudfront: "/aws-icons/cloudfront.svg",
+  kinesis: "/aws-icons/kinesis.svg",
+};
+
+// Same idea for the cluster view's non-cost-bearing infra node kinds
+// (security_group/subnet/vpc/iam_role, INFRA_KIND_LABEL below) -- a
+// separate table since these keys are drawn from a completely different
+// namespace than TYPE_LABEL/TYPE_ICON and would silently collide if
+// merged into one map. AWS's current icon package has no standalone
+// Security Group icon, so `security_group` is deliberately absent here
+// too -- it falls back to a generic placeholder glyph (NoIconGlyph below),
+// not a fabricated icon.
+export const INFRA_ICON: Record<string, string> = {
+  subnet: "/aws-icons/subnet.svg",
+  vpc: "/aws-icons/vpc.svg",
+  iam_role: "/aws-icons/iam_role.svg",
 };
 
 // Cluster view (roadmap 3.7 / "View connections"). Cost-bearing relation
@@ -124,7 +185,7 @@ const COLOR_IDLE = "#f0a202";
 const COLOR_UNKNOWN = "#6E7681";
 const COLOR_INFRA = "#a78bfa";
 
-function familyFor(type: string): Family {
+export function familyFor(type: string): Family {
   return TYPE_FAMILY[type] ?? "compute";
 }
 
@@ -151,6 +212,11 @@ interface ClusterNode {
   costBearing: boolean;
   resource: PositionedResource | null;
   edgeLabel: string | null; // relation label from center to this node; null for the center itself
+  // Raw INFRA_KIND_LABEL key (security_group/subnet/vpc/iam_role) for a
+  // non-cost-bearing node, used to look it up in INFRA_ICON -- null for
+  // the center and for cost-bearing nodes (they resolve their icon via
+  // `resource.type`/TYPE_ICON instead).
+  infraKind: string | null;
 }
 
 // Star/bubble radius is driven by projected monthly cost ONLY (roadmap
@@ -217,6 +283,7 @@ function layoutCluster(
       costBearing: true,
       resource: center,
       edgeLabel: null,
+      infraKind: null,
     },
   ];
 
@@ -244,6 +311,7 @@ function layoutCluster(
         costBearing: true,
         resource: target,
         edgeLabel: rel.label,
+        infraKind: null,
       });
     } else {
       nodes.push({
@@ -258,6 +326,7 @@ function layoutCluster(
         costBearing: false,
         resource: null,
         edgeLabel: rel.label,
+        infraKind: rel.kind,
       });
     }
   });
@@ -391,6 +460,103 @@ function StandaloneGlyph({ family, className }: { family: Family; className?: st
   );
 }
 
+// Placeholder for a node with neither an official AWS icon nor a family
+// classification -- today that's only `security_group` (see the
+// TYPE_ICON/INFRA_ICON comment above for why AWS's icon package has
+// nothing to map it to). A dashed diamond, deliberately distinct from
+// every family Glyph shape so it doesn't read as an undocumented 6th
+// family -- it's a "no icon available" marker, not a type glyph.
+function NoIconGlyph({ size, stroke }: { size: number; stroke: string }) {
+  const half = size / 2;
+  const sw = Math.max(0.12, size * 0.09);
+  return (
+    <rect
+      x={-half * 0.5}
+      y={-half * 0.5}
+      width={half}
+      height={half}
+      rx={half * 0.15}
+      fill="none"
+      stroke={stroke}
+      strokeWidth={sw}
+      strokeDasharray={`${sw * 1.6},${sw * 1.6}`}
+      transform="rotate(45)"
+    />
+  );
+}
+
+// Roadmap Section 1.5: the actual node renderer -- a dark chip, the type's
+// official AWS icon centered on top (falling back to the family Glyph, or
+// NoIconGlyph if there's no family either), and a ring around the chip in
+// `ringColor`. This is the ONE place a resource's icon+status gets drawn,
+// shared by the main galaxy stars and the cluster view's nodes below, so
+// the two can't visually drift apart.
+//
+// Status (idle/active/unknown) intentionally lives on the ring, never on
+// the icon itself -- official AWS icons carry their own fixed brand
+// colors, and overloading those with a second, conflicting color meaning
+// would break the "color encodes status, shape/icon encodes type" rule
+// this file has followed since Section 5 (see COLOR_ACTIVE et al. above).
+function ResourceIcon({
+  iconPath,
+  family,
+  size,
+  ringColor,
+}: {
+  iconPath: string | undefined;
+  family: Family | null;
+  size: number; // chip radius, same units as the caller's circle radius
+  ringColor: string;
+}) {
+  const ringWidth = Math.max(0.14, size * 0.12);
+  return (
+    <g>
+      <circle cx={0} cy={0} r={size} fill="#0b0f14" stroke={ringColor} strokeWidth={ringWidth} />
+      {iconPath ? (
+        <image
+          href={iconPath}
+          x={-size * 0.62}
+          y={-size * 0.62}
+          width={size * 1.24}
+          height={size * 1.24}
+          preserveAspectRatio="xMidYMid meet"
+        />
+      ) : family ? (
+        <Glyph family={family} size={size * 1.3} stroke="#e5e9ee" />
+      ) : (
+        <NoIconGlyph size={size * 1.1} stroke="#e5e9ee" />
+      )}
+    </g>
+  );
+}
+
+// Small fixed-size icon for non-star contexts (legend rows, detail panel
+// header) -- same fallback rule as ResourceIcon (official icon, else the
+// family Glyph), rendered in its own tiny standalone <svg> the way
+// StandaloneGlyph already does for the family-level rows above.
+export function StandaloneIcon({
+  type,
+  family,
+  size = 18,
+  className,
+}: {
+  type: string;
+  family: Family;
+  size?: number;
+  className?: string;
+}) {
+  const iconPath = TYPE_ICON[type];
+  return (
+    <svg viewBox="-7 -7 14 14" width={size} height={size} className={className}>
+      {iconPath ? (
+        <image href={iconPath} x={-6} y={-6} width={12} height={12} preserveAspectRatio="xMidYMid meet" />
+      ) : (
+        <Glyph family={family} size={10} stroke="currentColor" />
+      )}
+    </svg>
+  );
+}
+
 function DetailPanel({
   resource,
   region,
@@ -418,7 +584,12 @@ function DetailPanel({
       </button>
 
       <div className="mb-1 flex items-center gap-2 text-xs text-muted">
-        <StandaloneGlyph family={familyFor(resource.type)} className="text-[#7fd7ff]" />
+        <StandaloneIcon
+          type={resource.type}
+          family={familyFor(resource.type)}
+          size={22}
+          className="text-[#7fd7ff]"
+        />
         {TYPE_LABEL[resource.type] ?? resource.type} · {FAMILY_LABEL[familyFor(resource.type)]}
       </div>
       <div className="mb-4 break-words font-mono text-xl text-text">{resource.name}</div>
@@ -1165,21 +1336,44 @@ export default function GalaxyView() {
               </div>
             )}
             {legendOpen && !clusterActive && (
-              <div className="flex flex-col gap-1">
+              <div className="flex max-h-[50vh] flex-col gap-1 overflow-y-auto pr-1">
                 {ALL_FAMILIES.map((f) => {
                   const on = enabledFamilies.has(f);
+                  // Roadmap Section 1.5: per-type icon rows nested under
+                  // each family header, so the legend surfaces all 15
+                  // official AWS icons, not just one abstract shape per
+                  // family. Filtering itself stays family-granular (this
+                  // button is still the only click target that changes
+                  // `enabledFamilies`) -- the nested rows are informational,
+                  // shown only while their family is enabled to match what's
+                  // actually visible on the canvas.
+                  const typesInFamily = TYPE_FAMILY_KEYS_BY_FAMILY[f];
                   return (
-                    <button
-                      key={f}
-                      onClick={() => toggleFamily(f)}
-                      className={`flex items-center gap-2 rounded px-1.5 py-1 text-left text-xs transition-colors ${
-                        on ? "text-text hover:bg-surfacealt" : "text-muted/50 hover:bg-surfacealt"
-                      }`}
-                    >
-                      <StandaloneGlyph family={f} className={on ? "text-[#7fd7ff]" : "text-muted"} />
-                      <span>{FAMILY_LABEL[f]}</span>
-                      <span className="ml-auto font-mono text-muted">{familyCounts[f]}</span>
-                    </button>
+                    <div key={f}>
+                      <button
+                        onClick={() => toggleFamily(f)}
+                        className={`flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-xs transition-colors ${
+                          on ? "text-text hover:bg-surfacealt" : "text-muted/50 hover:bg-surfacealt"
+                        }`}
+                      >
+                        <StandaloneGlyph family={f} className={on ? "text-[#7fd7ff]" : "text-muted"} />
+                        <span>{FAMILY_LABEL[f]}</span>
+                        <span className="ml-auto font-mono text-muted">{familyCounts[f]}</span>
+                      </button>
+                      {on && (
+                        <div className="ml-2 flex flex-col gap-0.5 border-l border-border/60 py-0.5 pl-2">
+                          {typesInFamily.map((t) => (
+                            <div key={t} className="flex items-center gap-1.5 text-[10px] text-muted">
+                              <StandaloneIcon type={t} family={f} size={14} />
+                              <span>{TYPE_LABEL[t]}</span>
+                              {!TYPE_ICON[t] && (
+                                <span className="italic text-muted/60">(no official icon)</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   );
                 })}
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 border-t border-border pt-1.5 text-[10px] text-muted">
@@ -1195,6 +1389,10 @@ export default function GalaxyView() {
                     <span className="h-2 w-2 rounded-full" style={{ background: COLOR_UNKNOWN }} />
                     unknown
                   </span>
+                </div>
+                <div className="mt-1.5 border-t border-border pt-1.5 text-[9px] leading-snug text-muted/70">
+                  AWS icons used per AWS&apos;s icon guidelines. OpsPilot AI is not affiliated with,
+                  endorsed by, or sponsored by AWS.
                 </div>
               </div>
             )}
@@ -1266,8 +1464,15 @@ export default function GalaxyView() {
                       : idlePulsing
                         ? COLOR_IDLE
                         : COLOR_ACTIVE;
-                  const glyphSize = Math.max(1.1, n.radius * 1.05);
+                  const chipSize = Math.max(ICON_CHIP_MIN_SIZE, n.radius * 1.15);
                   const family = n.costBearing && n.resource ? familyFor(n.resource.type) : null;
+                  const iconPath = n.costBearing
+                    ? n.resource
+                      ? TYPE_ICON[n.resource.type]
+                      : undefined
+                    : n.infraKind
+                      ? INFRA_ICON[n.infraKind]
+                      : undefined;
                   const clickable = n.costBearing && !n.isCenter;
                   return (
                     <g
@@ -1276,24 +1481,26 @@ export default function GalaxyView() {
                       style={{ cursor: clickable ? "pointer" : "default" }}
                       onClick={clickable ? () => viewConnections(n.id) : undefined}
                     >
-                      <circle cx={n.x} cy={n.y} r={n.radius * 2.1} fill={color} opacity={0.14} />
-                      <circle
-                        cx={n.x}
-                        cy={n.y}
-                        r={n.radius}
-                        fill={color}
+                      <circle cx={n.x} cy={n.y} r={chipSize * 1.7} fill={color} opacity={0.14} />
+                      <g
+                        transform={`translate(${n.x} ${n.y})`}
                         opacity={n.costBearing ? 0.95 : 0.85}
-                        stroke={n.isCenter ? "#ffffff" : "none"}
-                        strokeWidth={n.isCenter ? 0.35 : 0}
-                      />
-                      {family && (
-                        <g transform={`translate(${n.x} ${n.y})`}>
-                          <Glyph family={family} size={glyphSize} stroke="#05070f" />
-                        </g>
+                      >
+                        <ResourceIcon iconPath={iconPath} family={family} size={chipSize} ringColor={color} />
+                      </g>
+                      {n.isCenter && (
+                        <circle
+                          cx={n.x}
+                          cy={n.y}
+                          r={chipSize * 1.2}
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth={0.35}
+                        />
                       )}
                       <text
                         x={n.x}
-                        y={n.y + n.radius + 3}
+                        y={n.y + chipSize + 3}
                         textAnchor="middle"
                         fontSize={2.1}
                         fill={n.costBearing ? "#aab4d8" : "#c4b5fd"}
@@ -1306,7 +1513,7 @@ export default function GalaxyView() {
                       {!n.costBearing && (
                         <text
                           x={n.x}
-                          y={n.y + n.radius + 5.4}
+                          y={n.y + chipSize + 5.4}
                           textAnchor="middle"
                           fontSize={1.6}
                           fill="#8b7cc4"
@@ -1338,7 +1545,7 @@ export default function GalaxyView() {
                   const unknownIdle = !r.idle;
                   const unknownData = !r.idle || !r.cost;
                   const color = unknownIdle ? COLOR_UNKNOWN : idlePulsing ? COLOR_IDLE : COLOR_ACTIVE;
-                  const glyphSize = Math.max(1.3, r.radius * 1.05);
+                  const chipSize = Math.max(ICON_CHIP_MIN_SIZE, r.radius * 1.15);
                   const isSelected = r.id === selectedId;
                   // Drag-aware render position (see getRenderPos above) --
                   // falls back to the deterministic golden-angle layout
@@ -1355,22 +1562,28 @@ export default function GalaxyView() {
                       onPointerUp={(e) => handleStarPointerUp(e, r.id)}
                       onPointerCancel={(e) => handleStarPointerCancel(e, r.id)}
                     >
-                      <circle cx={pos.x} cy={pos.y} r={r.radius * 2.1} fill={color} opacity={0.14} />
-                      <circle
-                        cx={pos.x}
-                        cy={pos.y}
-                        r={r.radius}
-                        fill={color}
-                        opacity={unknownData ? 0.55 : 0.95}
-                        stroke={isSelected ? "#ffffff" : "none"}
-                        strokeWidth={isSelected ? 0.35 : 0}
-                      />
-                      <g transform={`translate(${pos.x} ${pos.y})`}>
-                        <Glyph family={familyFor(r.type)} size={glyphSize} stroke="#05070f" />
+                      <circle cx={pos.x} cy={pos.y} r={chipSize * 1.7} fill={color} opacity={0.14} />
+                      <g transform={`translate(${pos.x} ${pos.y})`} opacity={unknownData ? 0.55 : 0.95}>
+                        <ResourceIcon
+                          iconPath={TYPE_ICON[r.type]}
+                          family={familyFor(r.type)}
+                          size={chipSize}
+                          ringColor={color}
+                        />
                       </g>
+                      {isSelected && (
+                        <circle
+                          cx={pos.x}
+                          cy={pos.y}
+                          r={chipSize * 1.2}
+                          fill="none"
+                          stroke="#ffffff"
+                          strokeWidth={0.35}
+                        />
+                      )}
                       <text
                         x={pos.x}
-                        y={pos.y + r.radius + 3}
+                        y={pos.y + chipSize + 3}
                         textAnchor="middle"
                         fontSize={2.1}
                         fill="#aab4d8"

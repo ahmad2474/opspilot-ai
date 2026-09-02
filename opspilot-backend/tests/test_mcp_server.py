@@ -70,6 +70,16 @@ def test_all_tools_are_registered() -> None:
         "get_resource_age",
         "estimate_instance_cost",
         "find_similar_past_investigations",
+        "check_log_retention",
+        "check_s3_waste",
+        "list_vpc_endpoints",
+        "check_vpc_endpoint_idle",
+        "estimate_vpc_endpoint_cost",
+        "check_snapshot_sprawl",
+        "list_ecs_clusters",
+        "check_container_idle",
+        "analyze_commitment_utilization",
+        "get_rightsizing_recommendations",
     }
 
 
@@ -375,6 +385,89 @@ def test_scan_region_no_cache_failure_does_not_leak_exception_detail(mock_scan: 
     assert "error" in result
     assert "123456789012" not in result["error"]
     assert "AccessDenied" not in result["error"]
+
+
+@patch("app.mcp.server.ecs_service.list_clusters")
+def test_list_ecs_clusters(mock_list: object) -> None:
+    from app.models.ecs import EcsClusterList, EcsClusterSummary
+
+    mock_list.return_value = EcsClusterList(
+        clusters=[
+            EcsClusterSummary(
+                cluster_arn="arn:aws:ecs:us-east-1:123:cluster/my-cluster",
+                cluster_name="my-cluster",
+                status="ACTIVE",
+                running_tasks_count=1,
+                pending_tasks_count=0,
+                active_services_count=1,
+                container_insights="enabled",
+            )
+        ],
+        count=1,
+    )
+
+    result = _call_tool("list_ecs_clusters", {})
+
+    assert result["count"] == 1
+    assert result["clusters"][0]["cluster_name"] == "my-cluster"
+
+
+@patch("app.mcp.server.ecs_service.check_container_idle")
+def test_check_container_idle(mock_check: object) -> None:
+    from app.models.ecs import EcsContainerIdleReport
+
+    mock_check.return_value = EcsContainerIdleReport(
+        cluster="my-cluster",
+        window_days=7,
+        container_insights_enabled=True,
+        findings=[],
+        total_tasks_checked=2,
+        total_services_checked=1,
+    )
+
+    result = _call_tool("check_container_idle", {"cluster": "my-cluster", "days": 7})
+
+    mock_check.assert_called_once_with("my-cluster", 7)
+    assert result["container_insights_enabled"] is True
+    assert result["total_tasks_checked"] == 2
+
+
+@patch("app.mcp.server.commitment_service.analyze_commitment_utilization")
+def test_analyze_commitment_utilization(mock_analyze: object) -> None:
+    from app.models.commitment import CommitmentAnalysisReport
+
+    mock_analyze.return_value = CommitmentAnalysisReport(
+        period_start="2026-08-01",
+        period_end="2026-09-01",
+        savings_plans_utilization=None,
+        savings_plans_coverage=None,
+        reservation_utilization=None,
+        reservation_coverage=None,
+        findings=[],
+        cost_explorer_api_requests_made=4,
+        estimated_cost_explorer_api_cost_usd=0.04,
+        note="test note",
+    )
+
+    result = _call_tool("analyze_commitment_utilization", {"days": 30})
+
+    mock_analyze.assert_called_once_with(30)
+    assert result["cost_explorer_api_requests_made"] == 4
+
+
+@patch("app.mcp.server.compute_optimizer_service.get_rightsizing_recommendations")
+def test_get_rightsizing_recommendations(mock_get: object) -> None:
+    from app.models.compute_optimizer import RightsizingReport
+
+    mock_get.return_value = RightsizingReport(
+        resource_type="ec2", enrolled=False, findings=[], total_checked=0, note="opt in first"
+    )
+
+    result = _call_tool("get_rightsizing_recommendations", {"resource_type": "ec2"})
+
+    mock_get.assert_called_once_with("ec2")
+    assert result["enrolled"] is False
+    assert result["note"] == "opt in first"
 
 
 @patch("app.mcp.server.investigation_service.find_similar_past_investigations")
