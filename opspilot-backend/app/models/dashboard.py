@@ -142,6 +142,22 @@ class RdsInstanceSummary(BaseModel):
         default=None,
         description="From DBSubnetGroup.VpcId -- roadmap 3.7 relation-shaping, no new call.",
     )
+    read_replica_db_instance_identifiers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "From ReadReplicaDBInstanceIdentifiers -- roadmap phase 2 Section "
+            "3.1's check_deletion_impact needs this: read replicas are NOT "
+            "deleted when their source instance is deleted, they become "
+            "independent, still-costing resources. No new AWS call."
+        ),
+    )
+    backup_retention_period: int | None = Field(
+        default=None,
+        description=(
+            "From BackupRetentionPeriod (days) -- 0 means automated backups "
+            "are already disabled for this instance. No new AWS call."
+        ),
+    )
 
 
 class RdsCard(BaseModel):

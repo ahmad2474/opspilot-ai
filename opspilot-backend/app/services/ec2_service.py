@@ -6,7 +6,7 @@ boto3 client), without needing to touch the agent or the LLM at all.
 from __future__ import annotations
 
 from app.aws.client import get_ec2_client
-from app.models.ec2 import EC2Instance, EC2InstanceList, EC2StatusCheck
+from app.models.ec2 import BlockDeviceMapping, EC2Instance, EC2InstanceList, EC2StatusCheck
 
 
 def _flatten_tags(raw_tags: list[dict[str, str]] | None) -> dict[str, str]:
@@ -70,6 +70,16 @@ def list_instances(
                             bdm["Ebs"]["VolumeId"]
                             for bdm in raw.get("BlockDeviceMappings", [])
                             if bdm.get("Ebs", {}).get("VolumeId")
+                        ],
+                        block_device_mappings=[
+                            BlockDeviceMapping(
+                                device_name=bdm.get("DeviceName"),
+                                volume_id=bdm.get("Ebs", {}).get("VolumeId"),
+                                delete_on_termination=bdm.get("Ebs", {}).get(
+                                    "DeleteOnTermination"
+                                ),
+                            )
+                            for bdm in raw.get("BlockDeviceMappings", [])
                         ],
                     )
                 )

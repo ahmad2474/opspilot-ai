@@ -38,7 +38,37 @@ class Settings(BaseSettings):
     opspilot_llm_primary_provider: LLMProviderName = "groq"
 
     groq_api_key: str | None = None
-    groq_model: str = "llama-3.3-70b-versatile"
+    # "llama-3.3-70b-versatile" was retired from Groq's catalog (live-verified
+    # 2026-09-02: a real completion call returned 404 model_not_found; GET
+    # /v1/models with the same key shows no plain Llama chat model at all
+    # anymore, only openai/gpt-oss-*, qwen/*, groq/compound* etc).
+    #
+    # openai/gpt-oss-120b was tried first and rejected: live-verified against
+    # this app's real agentic tool-calling loop (not just a single completion
+    # call), a broad multi-region "what's idle" question drove it into
+    # persistent 429 Too Many Requests for 6.5 minutes straight before the
+    # request finally gave up with a 503 -- effectively broken for real use,
+    # even though a single isolated completion call to it succeeds fine.
+    # qwen/qwen3.6-27b was rejected too: it leaks its raw <think>...</think>
+    # reasoning directly into the visible message content instead of a
+    # separate hidden channel, which would show up as literal text in the
+    # chat UI. groq/compound-mini has a much larger token budget but flatly
+    # rejects tool-calling ("`tool calling` is not supported with this
+    # model") -- a hard disqualifier for an app whose entire agent loop is
+    # tool calls.
+    #
+    # openai/gpt-oss-20b is the one that actually held up: live-verified with
+    # a real single-tool-call chat question through the running app end to
+    # end (real AWS account, real Groq call, correct answer, reasoning trace
+    # rendered) in ~32s including one transient 429 that resolved on its own
+    # retry -- not the 120b model's runaway failure. Same reasoning-tokens
+    # behavior as 120b (hidden, not visible, harmless since no caller here
+    # sets a low max_tokens), just a smaller model with a rate limit this
+    # account's free tier can actually sustain for this app's tool-call
+    # volume. A heavy multi-region investigation can still occasionally hit
+    # a 429 -- it retries and succeeds rather than failing outright, but this
+    # is worth revisiting if it proves too slow under real use.
+    groq_model: str = "openai/gpt-oss-20b"
     groq_base_url: str = "https://api.groq.com/openai/v1"
 
     gemini_api_key: str | None = None
@@ -49,6 +79,21 @@ class Settings(BaseSettings):
     nvidia_api_key: str | None = None
     nvidia_model: str = "meta/llama-3.3-70b-instruct"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+
+    # Per-provider deadline for one run_chat_turn attempt (app/agent/
+    # orchestrator.py). Live-verified bug, 2026-09-03: with no deadline
+    # anywhere in the LLM call path, a single chat turn hung 15m22s --
+    # Groq rejected instantly (413), Gemini answered but then failed a
+    # follow-up turn (400), and NVIDIA hung on Runner.run for ~5 minutes
+    # per attempt across 3 internal SDK retries before finally giving up.
+    # run_chat_turn wraps each provider's Runner.run in
+    # asyncio.wait_for(..., timeout=this) so a dead/hanging provider is
+    # abandoned and the next one tried, instead of blocking the whole
+    # turn. 45s is generous headroom over every real successful call
+    # observed in this app's logs (a full multi-tool-call turn has taken
+    # well under 15s), while still cutting off a hang like NVIDIA's long
+    # before it costs minutes.
+    opspilot_llm_provider_timeout_seconds: float = 45.0
 
     # --- App -----------------------------------------------------------
     opspilot_app_env: Literal["local", "ci", "prod"] = "local"

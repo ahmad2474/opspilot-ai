@@ -9,11 +9,13 @@ from app.api.routes import (
     aws_account,
     chat,
     dashboard,
+    deletion_impact,
     health,
     investigations,
     mcp_auth,
     mcp_info,
     resources,
+    waste,
 )
 from app.core.config import get_settings
 from app.core.logging import RequestIdMiddleware, configure_logging
@@ -83,3 +85,7 @@ app.include_router(mcp_info.router, tags=["mcp"], dependencies=_session_required
 app.include_router(mcp_auth.router, tags=["mcp"], dependencies=_session_required)
 app.include_router(audit_log.router, tags=["audit-log"], dependencies=_session_required)
 app.include_router(aws_account.router, tags=["aws-account"], dependencies=_session_required)
+app.include_router(waste.router, tags=["waste"], dependencies=_session_required)
+app.include_router(
+    deletion_impact.router, tags=["deletion-impact"], dependencies=_session_required
+)

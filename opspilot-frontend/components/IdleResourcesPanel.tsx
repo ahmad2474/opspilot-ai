@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { TYPE_LABEL } from "@/components/GalaxyView";
+import { TYPE_LABEL, StandaloneIcon, familyFor } from "@/components/GalaxyView";
 import RegionScanToolbar from "@/components/RegionScanToolbar";
 import { money, relativeTime } from "@/lib/format";
 import { useRegionScan } from "@/lib/useRegionScan";
@@ -101,7 +101,12 @@ export default function IdleResourcesPanel() {
                     <div className="text-text">{r.name}</div>
                     <div className="break-all font-mono text-[11px] text-muted">{r.id}</div>
                   </td>
-                  <td className="px-3 py-2 text-muted">{TYPE_LABEL[r.type] ?? r.type}</td>
+                  <td className="px-3 py-2 text-muted">
+                    <span className="flex items-center gap-1.5">
+                      <StandaloneIcon type={r.type} family={familyFor(r.type)} size={14} />
+                      {TYPE_LABEL[r.type] ?? r.type}
+                    </span>
+                  </td>
                   <td className="px-3 py-2 font-mono text-accent">
                     {r.idle?.idle_days ?? "—"}
                     {r.idle?.idle_since_is_estimated ? " (est.)" : ""}

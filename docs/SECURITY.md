@@ -18,8 +18,13 @@ what would need to change before this could be safely exposed to untrusted netwo
 independent users.
 
 Read access to AWS is read-only by design (Section 2 below). No AWS resource can be modified,
-stopped, or deleted by this app today — the roadmap's write-action/approval layer (Section 6,
-build-order Step 8) is intentionally not built yet.
+stopped, or deleted by this app — **permanently, not "not yet."** The originally-planned write-
+action/approval layer (Section 6, build-order Step 8) was retired outright (Phase 2 roadmap
+Section 3.0), not merely deferred: this app's IAM policy stays `Describe*`/`List*`/`Get*`/
+`pricing:*`-only forever, by policy, not by convention. In its place, `check_deletion_impact`
+(Phase 2 Section 3) answers "what would happen if I deleted/terminated this" entirely through
+read-only analysis — the useful part of a write-approval feature (knowing the consequences)
+without ever taking on the risk of a mutating call.
 
 ## 2. Authentication
 
@@ -108,10 +113,10 @@ added — reproduced in summary here:
 - **Read-only statement (`OpspilotReadOnly`)**: every action is `Describe*`/`List*`/`Get*` (or the
   read-shaped equivalent — `apigateway:GET`, `cloudwatch:GetMetricData`, `pricing:GetProducts`,
   etc.) against `Resource: "*"`. **No write, modify, stop, terminate, or delete permission against
-  any monitored AWS resource exists anywhere in this policy.** This directly implements the
-  roadmap's "every IAM role is read-only ... no write access exists until the write-action/
-  approval layer is explicitly built later" rule (that layer, build-order Step 8, is not built —
-  see Section 8 below).
+  any monitored AWS resource exists anywhere in this policy.** This is now a *permanent* property
+  of the app, not a temporary one pending a future write-action layer — Phase 2 roadmap Section 3.0
+  retired that layer outright (build-order Step 8; see Section 8 below) specifically so this
+  statement could be made without a "for now" attached.
 - **Two write-capable statements**, both narrowly ARN-scoped to this app's own bookkeeping
   DynamoDB tables, never to a monitored AWS resource:
   - `OpspilotInvestigationMemoryWrite` — `PutItem`/`Scan` on `opspilot-investigations` only (the
@@ -123,6 +128,14 @@ added — reproduced in summary here:
   request) and the more conservative one from a scope perspective (list-price estimates, not
   billed-cost lookups tied to your actual spend), and is labeled as such in the UI (see roadmap
   Section 3.2).
+  - **One deliberate exception (Phase 2 Tier 3, roadmap-phase2.md Section 1.3)**:
+    `analyze_commitment_utilization` calls four *read-only* Cost Explorer commitment APIs
+    (`GetSavingsPlansUtilization`/`GetSavingsPlansCoverage`/`GetReservationUtilization`/
+    `GetReservationCoverage`) — commitment analysis fundamentally requires real billing data, which
+    the Pricing API can't provide. This is the one tool in the whole app where a call costs real
+    money per request; every response surfaces `estimated_cost_explorer_api_cost_usd` and
+    `cost_explorer_api_requests_made` explicitly rather than hiding it, same disclosure discipline
+    as everything else on this page.
 - **Cross-account role assumption** (a second, separate control from Section 3's IAM keys — the
   roadmap's "external ID per connection" requirement) does not apply yet: multi-account support is
   explicitly deferred (roadmap Section 2/8), so there is no cross-account trust relationship to
@@ -137,16 +150,23 @@ added — reproduced in summary here:
   patterns, private-key blocks, bearer tokens, inline passwords): **no secret has ever been
   committed to this repository, live or historical.**
 - This repository is public on GitHub, so GitHub's secret scanning is automatically enabled at no
-  cost. **Push protection's on/off state has not been verified** — it requires the repo owner to
-  check it directly under GitHub → Settings → Code security with an authenticated session; this is
-  a manual follow-up, not something verifiable or fixable from the codebase itself (tracked in
-  `docs/BUILD_PROGRESS.md`).
+  cost. **Push protection confirmed enabled** (2026-09-03, via `gh api repos/ahmad2474/opspilot-ai
+  --jq '.security_and_analysis'`: `secret_scanning.status` and
+  `secret_scanning_push_protection.status` both `"enabled"`) — previously flagged as needing a
+  manual check, now closed.
 - Standing policy if a secret is ever accidentally committed: rotate it immediately in the
   provider's console. `git revert`/history rewriting does not, on its own, remove a secret's
   exposure — anyone who already cloned or viewed the commit has it.
 - Request logging (`opspilot-backend/app/core/logging.py`'s `RequestIdMiddleware`) logs only HTTP
   method, path, status code, and duration — never headers, request/response bodies, bearer tokens,
   or cookie values.
+- Dev-only dependency, not the shipped app: the eval harness's `deepeval` dependency
+  (`opspilot-backend/eval/`, `requirements-dev.txt`) sends anonymous usage telemetry to Confident AI
+  by default. Opted out via `DEEPEVAL_TELEMETRY_OPT_OUT=1`, set in `eval/conftest.py` before
+  anything in the package imports `deepeval` — applies to every eval run, local or CI, with no
+  separate CI configuration needed. Flagged by `security-reviewer` 2026-09-03; the data involved is
+  synthetic moto-fixture facts and free-tier-LLM-generated answers, never real AWS data or
+  credentials, but the opt-out removes the outbound flow entirely regardless.
 
 ## 6. MCP server — token authentication
 
@@ -235,8 +255,7 @@ the feature it's auditing.
 |---|---|---|
 | Static, long-lived AWS IAM user keys (Section 3) | Accepted for now | Hosting for/by anyone other than the single local operator |
 | No rate limiting/lockout (login, MCP `call_tool`) | Accepted for now | Any internet-facing deployment |
-| GitHub push-protection on/off status unverified | Needs manual check | N/A — repo-owner action, not code |
-| Write-action/approval layer not built | Not started, deferred | Any AWS-mutating feature (stop/terminate, etc.) — build-order Step 8, explicitly last and gated on a separate UX decision |
+| Write-action/approval layer | **Retired permanently** (Phase 2 roadmap §3.0), not deferred | N/A — this is a closed decision, not a pending one. Replaced by the read-only `check_deletion_impact` (§3), which answers "what would this affect" without ever mutating AWS |
 | Multi-account / cross-account role assumption | Not started, deferred | Supporting more than one connected AWS account (roadmap Section 2/8) |
 | MCP tool calls not individually audit-logged | Accepted, covered by app logs instead | Per-user MCP attribution (not meaningful until MCP moves beyond one shared token) |
 

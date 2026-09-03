@@ -327,12 +327,39 @@ export class ScanCooldownError extends Error {
   }
 }
 
+// Live-verified bug, 2026-09-03: with no deadline anywhere in the LLM call
+// path, a single /chat request hung 15m22s (Groq rejected instantly, Gemini
+// answered but then failed a follow-up turn, NVIDIA hung ~5 minutes per
+// retry across 3 attempts) with this UI spinning on "Investigating..." the
+// entire time -- no feedback, no way to tell a hang from a slow-but-working
+// answer. The backend fix (opspilot_llm_provider_timeout_seconds, 45s
+// default) now bounds each of the 3 fallback providers, so a fully-exhausted
+// chain gives up in well under 135s. 3 minutes matches SCAN_TIMEOUT_MS's own
+// headroom-above-observed-worst-case pattern above.
+const CHAT_TIMEOUT_MS = 3 * 60 * 1000;
+
 export async function sendChatMessage(message: string): Promise<ChatResponse> {
-  const res = await fetch(`${API_BASE_URL}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify({ message }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ message }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(
+        `The agent didn't respond within ${Math.round(CHAT_TIMEOUT_MS / 1000)}s. Try again.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);
@@ -478,6 +505,88 @@ export async function revokeMcpToken(): Promise<McpTokenRevokeResponse> {
 // backed by ec2:DescribeRegions. Cheap/infrequent — not cached client-side.
 export async function getRegions(): Promise<RegionsResponse> {
   const res = await fetch(`${API_BASE_URL}/resources/regions`, {
+    cache: "no-store",
+    headers: await authHeaders(),
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new ApiError(body?.detail ?? `Request failed with status ${res.status}`, res.status);
+  }
+
+  return res.json();
+}
+
+// ---------------------------------------------------------------------------
+// Deletion-impact report ("Check deletion impact" button, GalaxyView.tsx's
+// DetailPanel; roadmap phase 2 Section 3.1). Mirrors
+// opspilot-backend/app/models/deletion_impact.py field-for-field,
+// snake_case end to end -- do not rename these, that model's own docstring
+// is the source of truth for what each bucket means. Only ec2/rds/ebs are
+// supported resource_type values; anything else is a 400 from the backend
+// (app/api/routes/deletion_impact.py), so callers must gate the button on
+// resource type before ever calling getDeletionImpact below rather than
+// relying on that 400 as a UI state to design around.
+// ---------------------------------------------------------------------------
+
+export interface DeletionImpactRemovedEntry {
+  resource_type: string;
+  resource_id: string;
+  reason: string;
+}
+
+export interface DeletionImpactPersistEntry {
+  resource_type: string;
+  resource_id: string;
+  reason: string;
+  // Real projected monthly cost from the backend's existing
+  // cost_service.estimate_cost, wherever it has a pricing path for this
+  // kind of thing -- null does NOT mean "$0/mo", it means no pricing path
+  // exists at all (e.g. a snapshot). Fall back to `cost_note` in that case.
+  estimated_monthly_cost_usd: number | null;
+  // Set only when estimated_monthly_cost_usd is null -- explains why (e.g.
+  // "see check_snapshot_sprawl") or that a live cost lookup failed.
+  cost_note: string | null;
+}
+
+// e.g. code: "asg_will_replace_instance" -- the roadmap's own framing calls
+// this "the single most valuable gotcha this tool can surface"; render it
+// as the most prominent section, not just another bullet list.
+export interface DeletionImpactWarning {
+  code: string;
+  message: string;
+}
+
+export interface DeletionImpactNeverAffectedEntry {
+  resource_type: string;
+  // null only for a general statement with no single addressable ID.
+  resource_id: string | null;
+  message: string;
+}
+
+export interface DeletionImpactReport {
+  resource_type: "ec2" | "rds" | "ebs";
+  resource_id: string;
+  will_be_removed: DeletionImpactRemovedEntry[];
+  will_persist_and_keep_costing: DeletionImpactPersistEntry[];
+  behavioral_warnings: DeletionImpactWarning[];
+  never_affected: DeletionImpactNeverAffectedEntry[];
+  // Non-empty means this report is INCOMPLETE, not that the unverified
+  // facts are false (e.g. an AccessDenied on a not-yet-granted IAM action)
+  // -- must be surfaced as a visible caveat, never silently dropped or
+  // treated as "all clear". See the backend model's own docstring.
+  check_errors: string[];
+}
+
+// Backed by GET /deletion-impact -- read-only, this never deletes anything,
+// it only reports what WOULD happen (same "dashboard is just another
+// caller of app/services/" pattern as every other route in this app).
+export async function getDeletionImpact(
+  resourceType: "ec2" | "rds" | "ebs",
+  resourceId: string
+): Promise<DeletionImpactReport> {
+  const params = new URLSearchParams({ resource_type: resourceType, resource_id: resourceId });
+  const res = await fetch(`${API_BASE_URL}/deletion-impact?${params.toString()}`, {
     cache: "no-store",
     headers: await authHeaders(),
   });

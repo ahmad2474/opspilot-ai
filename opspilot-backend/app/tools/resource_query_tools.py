@@ -17,9 +17,9 @@ from app.services import cost_service, resource_query_service
 logger = logging.getLogger("app.tools.resource_query")
 
 _TYPE_CODES_HELP = (
-    "one of the 15 roadmap-scoped types -- 'ec2', 'ebs', 'rds', 'eip', 'elb', "
-    "'lambda', 'nat_gateway', 'dynamodb', 'elasticache', 'sagemaker', "
-    "'redshift', 'api_gateway', 'cloudfront', 'opensearch', 'kinesis'."
+    "one of: ec2, ebs, rds, eip, elb, lambda, nat_gateway, dynamodb, "
+    "elasticache, sagemaker, redshift, api_gateway, cloudfront, opensearch, "
+    "kinesis."
 )
 
 
@@ -46,19 +46,12 @@ def list_resources(
     ] = None,
 ) -> str:
     """Full inventory of every resource this app tracks (or a filtered
-    subset), for count/list-style questions ('how many resources are
-    running', 'list them'). Each entry includes its Name tag (falling
-    back to its raw AWS ID if untagged -- never silently omitted) and
-    lifecycle status; resources are returned already grouped by type and
-    sorted alphabetically by name within each group. Fast by design --
-    does NOT make a fresh CloudWatch/Pricing call per resource just to
-    count or list them: idle_count/not_idle_count (a real, CloudWatch-
-    verified idle/active split) are only populated when
-    idle_data_source='cached_scan' (a region scan already ran and is
-    cached for this region); otherwise idle_data_source='unavailable' and
-    those two fields are null -- by_status (lifecycle status counts) is
-    always populated either way and is cheap. Call scan_region first if
-    you need a verified idle/active split and none is cached yet.
+    subset), for count/list-style questions. Each entry has its Name tag
+    (raw AWS ID if untagged); grouped by type, sorted alphabetically.
+    Fast -- no per-resource CloudWatch/Pricing calls. by_status is always
+    populated; idle_count/not_idle_count are only populated (verified)
+    when idle_data_source='cached_scan', else 'unavailable' and null --
+    call scan_region first for a verified idle split.
     """
     logger.info(
         "tool_call list_resources region=%s resource_type=%s status=%s",
@@ -86,14 +79,11 @@ def get_resource_health(
         str | None, "AWS region the resource is in. Omit for the account's default region."
     ] = None,
 ) -> str:
-    """Status/health signals for a single resource: lifecycle status
-    (running/stopped/available/associated/etc.), a short 1-day recent-
-    activity CloudWatch check (near-zero usage right now -- reuses the
-    same idle-detection signal as check_idle but over a short window
-    meant for 'is this alive right now' rather than a longer idle-waste
-    window), and -- for EC2 specifically -- instance/system status checks
-    with any scheduled maintenance events. Returns found=false rather
-    than fabricating data if the resource cannot be located."""
+    """Status/health for one resource: lifecycle status, a short 1-day
+    recent-activity check ('is this alive right now', not a longer
+    idle-waste window), and for EC2 also instance/system status checks
+    plus scheduled maintenance events. found=false rather than
+    fabricating data if not located."""
     logger.info(
         "tool_call get_resource_health resource_type=%s resource_id=%s region=%s",
         resource_type,

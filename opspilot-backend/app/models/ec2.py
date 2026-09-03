@@ -5,6 +5,30 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class BlockDeviceMapping(BaseModel):
+    """One entry from DescribeInstances' BlockDeviceMappings -- carries the
+    real, per-volume `DeleteOnTermination` flag deletion_impact_service
+    needs (roadmap phase 2 Section 3.1: "each attached EBS volume's actual
+    DeleteOnTermination flag ... this is a real, per-volume, queryable
+    field, not something to assume"). EC2Instance.attached_volume_ids
+    above only carries the bare volume IDs; this carries the full mapping.
+    No new AWS call -- parsed from the same BlockDeviceMappings
+    list_instances() already receives.
+    """
+
+    device_name: str | None = None
+    volume_id: str | None = None
+    delete_on_termination: bool | None = Field(
+        default=None,
+        description=(
+            "The actual DeleteOnTermination flag AWS reports for this "
+            "specific attached volume -- never assumed from the 'root "
+            "usually true, data usually false' default. None only when "
+            "AWS omitted the Ebs block entirely (a non-EBS device)."
+        ),
+    )
+
+
 class EC2Instance(BaseModel):
     instance_id: str
     instance_type: str
@@ -40,6 +64,16 @@ class EC2Instance(BaseModel):
         default_factory=list,
         description="EBS volume IDs from BlockDeviceMappings -- the EC2 side of the "
         "EC2<->EBS 'attached' relation (roadmap 3.7).",
+    )
+    block_device_mappings: list[BlockDeviceMapping] = Field(
+        default_factory=list,
+        description=(
+            "Full per-volume block device mapping detail, including the real "
+            "per-volume delete_on_termination flag -- roadmap phase 2 Section "
+            "3.1's check_deletion_impact needs this (attached_volume_ids above "
+            "only carries bare volume IDs). Parsed from the same "
+            "BlockDeviceMappings field, no new AWS call."
+        ),
     )
 
 

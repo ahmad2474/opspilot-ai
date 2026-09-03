@@ -23,18 +23,25 @@ from app.models.cost import DateRange
 from app.services import (
     cloudtrail_service,
     cloudwatch_service,
+    commitment_service,
+    compute_optimizer_service,
     cost_service,
+    deletion_impact_service,
     dynamodb_service,
     ec2_service,
+    ecs_service,
     idle_service,
     investigation_service,
     lambda_service,
+    logs_service,
     mcp_auth_service,
     rds_service,
     resource_query_service,
     s3_service,
     scan_service,
+    snapshot_service,
     sns_service,
+    vpc_endpoint_service,
 )
 
 logger = logging.getLogger("app.mcp.server")
@@ -325,6 +332,142 @@ def estimate_instance_cost(instance_type: str, region: str) -> str:
     monthly_rate (hourly x ~730 hours)."""
     result = cost_service.estimate_instance_cost(instance_type, region)
     return result.model_dump_json()
+
+
+@mcp.tool()
+def check_log_retention() -> str:
+    """Find CloudWatch Log groups with no retention policy set -- log data
+    kept forever by default. Free/cheap DescribeLogGroups-only check, no
+    CloudWatch metrics needed. Returns a findings list (one per flagged log
+    group, with its real stored-byte size), not a single idle/cost verdict
+    (roadmap phase 2 Section 1.3)."""
+    return logs_service.check_log_retention().model_dump_json()
+
+
+@mcp.tool()
+def check_s3_waste(bucket: str, days: int = 7) -> str:
+    """Check an S3 bucket for storage/lifecycle waste: no lifecycle policy
+    at all, incomplete multipart uploads older than `days`, and versioning
+    enabled with no noncurrent-version-expiration rule. Returns a findings
+    list per bucket (zero to three independent flags), a structurally
+    different shape from check_idle's single is_idle boolean (roadmap
+    phase 2 Section 1.2). Also includes a best-effort S3-Standard-vs-
+    colder-tier price-gap note. Does not flag "no recent access" objects --
+    that needs S3 Storage Lens/Server Access Logging enabled to measure
+    honestly."""
+    return s3_service.check_s3_waste(bucket, days=days).model_dump_json()
+
+
+@mcp.tool()
+def list_vpc_endpoints() -> str:
+    """List VPC Endpoints (Interface, Gateway, Gateway Load Balancer) in
+    the configured region."""
+    return vpc_endpoint_service.list_vpc_endpoints().model_dump_json()
+
+
+@mcp.tool()
+def check_vpc_endpoint_idle(vpc_endpoint_id: str, days: int = 7) -> str:
+    """Check whether a VPC Interface Endpoint has near-zero data-plane
+    traffic (BytesProcessed) over the given window -- same shape as
+    check_idle. Raises for a Gateway endpoint (no hourly charge, no traffic
+    metric). Roadmap phase 2 Section 1.1."""
+    return vpc_endpoint_service.check_vpc_endpoint_idle(vpc_endpoint_id, days).model_dump_json()
+
+
+@mcp.tool()
+def estimate_vpc_endpoint_cost(vpc_endpoint_id: str) -> str:
+    """Estimate on-demand cost for a VPC Interface Endpoint via the AWS
+    Pricing API -- same projected_monthly/incurred_so_far shape as
+    estimate_cost."""
+    return vpc_endpoint_service.estimate_vpc_endpoint_cost(vpc_endpoint_id).model_dump_json()
+
+
+@mcp.tool()
+def check_snapshot_sprawl(
+    resource_type: str, retention_days_or_count: int, retention_mode: str = "days"
+) -> str:
+    """Find EBS/RDS snapshot sprawl: orphaned snapshots (source volume/
+    instance no longer exists) and snapshots beyond a caller-supplied
+    retention threshold -- retention_days_or_count has no default, there is
+    no universal 'correct' value, always ask the user for it. retention_mode:
+    'days' (older than N days) or 'count' (keep the N most-recent per
+    source). Returns a findings list; a snapshot can be flagged as both
+    orphaned and beyond_retention at once (roadmap phase 2 Section 1.3)."""
+    return snapshot_service.check_snapshot_sprawl(
+        resource_type, retention_days_or_count, retention_mode=retention_mode
+    ).model_dump_json()
+
+
+@mcp.tool()
+def list_ecs_clusters() -> str:
+    """List ECS clusters in the configured region, including each cluster's
+    CloudWatch Container Insights setting ('enabled'/'enhanced'/'disabled').
+    Use this to find a `cluster` name for check_container_idle."""
+    return ecs_service.list_clusters().model_dump_json()
+
+
+@mcp.tool()
+def check_container_idle(cluster: str, days: int = 7) -> str:
+    """Find ECS/Fargate container waste in one cluster: running Fargate
+    tasks with near-zero CPU/memory utilization, tasks allocated far more
+    vCPU/memory than they use (rightsizing-flavored), and services with a
+    non-zero minimum desired count but near-zero real traffic (standby
+    capacity). Task-level, not cluster-level. Requires CloudWatch Container
+    Insights enabled on the cluster (a one-time opt-in, same pattern as
+    Redshift/Kinesis) -- if disabled, returns container_insights_enabled=false
+    with a plain how-to-opt-in note instead of erroring. Findings list, not
+    a single verdict (roadmap phase 2 Section 1.2)."""
+    return ecs_service.check_container_idle(cluster, days).model_dump_json()
+
+
+@mcp.tool()
+def analyze_commitment_utilization(days: int = 30) -> str:
+    """Analyze Savings Plan and Reserved Instance utilization AND coverage
+    for this account (roadmap phase 2 Section 1.3) -- account-level, not
+    about a single resource. UTILIZATION findings are real wasted money
+    (paying for an under-used commitment); COVERAGE findings are a savings
+    OPPORTUNITY, not waste in the same sense (paying on-demand for usage a
+    commitment could cover, but nothing overspent). Never conflate the two.
+    Calls AWS Cost Explorer's PAID commitment APIs (4 requests per call,
+    small but real per-request cost -- see the response's `note`/
+    `estimated_cost_explorer_api_cost_usd`)."""
+    return commitment_service.analyze_commitment_utilization(days).model_dump_json()
+
+
+@mcp.tool()
+def get_rightsizing_recommendations(resource_type: str) -> str:
+    """Get AWS Compute Optimizer's own ML-driven rightsizing recommendations
+    -- NOT idle detection, catches a busy-but-oversized resource idle
+    checking structurally can't. resource_type: one of 'ec2', 'ebs',
+    'lambda', 'ecs' (ECS-on-Fargate). Findings are AWS-generated verdicts,
+    not this app's own computed threshold. Requires a one-time
+    account-level Compute Optimizer opt-in -- an un-enrolled account
+    returns enrolled=false with a plain how-to-opt-in note, not an error."""
+    return compute_optimizer_service.get_rightsizing_recommendations(
+        resource_type
+    ).model_dump_json()
+
+
+@mcp.tool()
+def check_deletion_impact(resource_type: str, resource_id: str) -> str:
+    """Analyze what actually happens if a specific resource is deleted --
+    read-only, this NEVER deletes anything itself (roadmap phase 2 Section
+    3, the permanent read-only replacement for the retired write/approval
+    Step 8). resource_type: 'ec2' (instance termination), 'rds' (DB
+    instance deletion), or 'ebs' (standalone volume deletion). Returns a
+    structured report, not prose: will_be_removed (things that actually
+    disappear), will_persist_and_keep_costing (things that remain and keep
+    costing, each with a real dollar figure where one is computable via
+    estimate_cost), behavioral_warnings (surprising operational
+    consequences -- e.g. an Auto Scaling Group replacing a terminated
+    member instance, so terminating it alone won't reduce spend), and
+    never_affected (independent objects like security groups/IAM roles,
+    stated explicitly for completeness). check_errors lists any live check
+    that could not be verified (e.g. a permission gap) -- treat those as
+    unknown, never as a settled 'no'."""
+    return deletion_impact_service.check_deletion_impact(
+        resource_type, resource_id
+    ).model_dump_json()
 
 
 @mcp.tool()

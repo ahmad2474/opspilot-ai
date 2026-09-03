@@ -69,7 +69,7 @@ REQUEST_COUNT_IDLE_THRESHOLD = 1.0
 # no datapoint at all for a period with zero invocations, rather than a
 # datapoint valued 0 (unlike EC2 CPUUtilization/EBS Volume*Ops/RDS
 # DatabaseConnections, which are always-on gauges published every period
-# regardless of value). See _check_idle_via_metrics' zero_fill_missing_days
+# regardless of value). See check_idle_via_metrics' zero_fill_missing_days
 # parameter below for how this is handled -- every branch in this batch
 # that shares this "sparse count metric" shape (Lambda, NAT Gateway,
 # DynamoDB, SageMaker, API Gateway, CloudFront, Kinesis) passes
@@ -201,10 +201,18 @@ def _to_utc_date(value: datetime) -> date:
     return value.astimezone(timezone.utc).date()
 
 
-def _bucket_by_day(datapoints: list) -> dict[date, float]:
+def bucket_by_day(datapoints: list) -> dict[date, float]:
     """Last datapoint wins per day (there should only be one per day at
     Period=86400, but sorted-by-timestamp makes 'last wins' deterministic
-    if CloudWatch ever returns more than one for a partial/boundary day)."""
+    if CloudWatch ever returns more than one for a partial/boundary day).
+
+    Public (no leading underscore) on purpose -- ecs_service.py's per-day
+    utilization-ratio calculation (roadmap phase 2 Section 1.2, code-review
+    fix: ECS idle detection was averaging the whole window instead of
+    evaluating every day, the same mistake this file's own
+    check_idle_via_metrics exists specifically to avoid) reuses this exact
+    day-bucketing instead of duplicating it.
+    """
     by_day: dict[date, float] = {}
     for dp in datapoints:
         if dp.average is None:
@@ -233,7 +241,7 @@ def _trailing_idle_streak(all_days: list[date], is_day_idle) -> tuple[date | Non
     return streak_start, idle_days
 
 
-def _not_idle_result(resource_id: str, resource_type: str, days: int) -> IdleCheckResult:
+def not_idle_result(resource_id: str, resource_type: str, days: int) -> IdleCheckResult:
     """Conservative 'no verdict' result -- used both when a resource can't
     be found at all (mirrors EC2's own 'no datapoints' leniency: never
     fabricate an idle verdict from missing data) and when a resource is
@@ -314,7 +322,7 @@ def _instant_idle_result(
     )
 
 
-def _check_idle_via_metrics(
+def check_idle_via_metrics(
     resource_id: str,
     resource_type: str,
     days: int,
@@ -325,7 +333,11 @@ def _check_idle_via_metrics(
     zero_fill_missing_days: bool = False,
 ) -> IdleCheckResult:
     """Generic CloudWatch-metric-window idle check, shared by every
-    metric-driven type in both Step 3 batches (EBS-attached, RDS, ELB from
+    metric-driven type in both Step 3 batches (plus vpc_endpoint_service.py's
+    VPC Interface Endpoint check, roadmap phase 2 Section 1.1 -- public
+    on purpose so that module can reuse this exact zero-fill/trailing-streak
+    logic instead of duplicating it, without folding 'vpc_endpoint' into
+    this file's own 15-type resource_type dispatcher) (EBS-attached, RDS, ELB from
     batch A; Lambda, NAT Gateway, DynamoDB, ElastiCache, SageMaker,
     Redshift, API Gateway, CloudFront, OpenSearch, Kinesis from batch B)
     -- and EC2's own two-metric variant could be rewritten on top of this
@@ -390,7 +402,7 @@ def _check_idle_via_metrics(
             extra_dimensions=extra_dimensions,
             region=region,
         )
-        by_metric.append((_bucket_by_day(points), threshold))
+        by_metric.append((bucket_by_day(points), threshold))
 
     younger_than_window = bool(
         create_time is not None and create_time > now - timedelta(days=days)
@@ -481,9 +493,9 @@ def _check_idle_ec2(instance_id: str, days: int, region: str | None = None) -> I
         region=region,
     )
 
-    cpu_by_day = _bucket_by_day(cpu_points)
-    net_in_by_day = _bucket_by_day(net_in_points)
-    net_out_by_day = _bucket_by_day(net_out_points)
+    cpu_by_day = bucket_by_day(cpu_points)
+    net_in_by_day = bucket_by_day(net_in_points)
+    net_out_by_day = bucket_by_day(net_out_points)
 
     # Every day judged independently, not blended -- a day-3 burst must
     # never be averaged away by idle days around it (roadmap 3.1).
@@ -543,7 +555,7 @@ def _check_idle_ebs(volume_id: str, days: int, region: str | None = None) -> Idl
     if volume is not None and not volume.is_attached:
         return _instant_idle_result(volume_id, "ebs", days, create_time)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         volume_id,
         "ebs",
         days,
@@ -567,7 +579,7 @@ def _check_idle_rds(instance_id: str, days: int, region: str | None = None) -> I
     instance = rds_service.get_instance(instance_id, region=region)
     create_time = instance.instance_create_time if instance else None
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         instance_id,
         "rds",
         days,
@@ -599,12 +611,12 @@ def _check_idle_eip(resource_id: str, days: int, region: str | None = None) -> I
     if address is None:
         # Can't verify association state at all -- never fabricate an idle
         # verdict from missing data (mirrors EC2's "no datapoints" case).
-        return _not_idle_result(resource_id, "eip", days)
+        return not_idle_result(resource_id, "eip", days)
     if not address.is_associated:
         return _instant_idle_result(resource_id, "eip", days, None)
     # Associated -- never idle, full stop, per the Section 2a signal. No
     # time series exists either way, so idle_since/idle_days stay empty.
-    return _not_idle_result(resource_id, "eip", days)
+    return not_idle_result(resource_id, "eip", days)
 
 
 def _check_idle_elb(name: str, days: int, region: str | None = None) -> IdleCheckResult:
@@ -615,10 +627,10 @@ def _check_idle_elb(name: str, days: int, region: str | None = None) -> IdleChec
         # the resource_id itself), an ALB/NLB's dimension value must be
         # parsed from its ARN -- with no describe_load_balancers match
         # there's no ARN to parse, so there's no CloudWatch call to make.
-        return _not_idle_result(name, "elb", days)
+        return not_idle_result(name, "elb", days)
 
     namespace, dimension_name, dimension_value = elb_service.cloudwatch_dimension(lb)
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         name,
         "elb",
         days,
@@ -648,9 +660,9 @@ def _check_idle_lambda(
     always False for this type, same documented gap as EIP."""
     function = lambda_service.get_function(function_name, region=region)
     if function is None:
-        return _not_idle_result(function_name, "lambda", days)
+        return not_idle_result(function_name, "lambda", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         function_name,
         "lambda",
         days,
@@ -672,9 +684,9 @@ def _check_idle_nat_gateway(
     """Section 2a: 'BytesOutToDestination/BytesInFromSource ~= 0'."""
     gateway = nat_gateway_service.get_nat_gateway(nat_gateway_id, region=region)
     if gateway is None:
-        return _not_idle_result(nat_gateway_id, "nat_gateway", days)
+        return not_idle_result(nat_gateway_id, "nat_gateway", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         nat_gateway_id,
         "nat_gateway",
         days,
@@ -703,9 +715,9 @@ def _check_idle_dynamodb(
     Consumed*CapacityUnits signal is valid regardless of billing mode."""
     table = dynamodb_service.get_table(table_name, region=region)
     if table is None:
-        return _not_idle_result(table_name, "dynamodb", days)
+        return not_idle_result(table_name, "dynamodb", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         table_name,
         "dynamodb",
         days,
@@ -731,9 +743,9 @@ def _check_idle_elasticache(
     """Section 2a: 'CurrConnections ~= 0'."""
     cluster = elasticache_service.get_cluster(cache_cluster_id, region=region)
     if cluster is None:
-        return _not_idle_result(cache_cluster_id, "elasticache", days)
+        return not_idle_result(cache_cluster_id, "elasticache", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         cache_cluster_id,
         "elasticache",
         days,
@@ -760,11 +772,11 @@ def _check_idle_sagemaker(
     'can't verify' rather than guessing at a variant name."""
     endpoint = sagemaker_service.get_endpoint(endpoint_name, region=region)
     if endpoint is None:
-        return _not_idle_result(endpoint_name, "sagemaker", days)
+        return not_idle_result(endpoint_name, "sagemaker", days)
     if not endpoint.variant_name:
-        return _not_idle_result(endpoint_name, "sagemaker", days)
+        return not_idle_result(endpoint_name, "sagemaker", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         endpoint_name,
         "sagemaker",
         days,
@@ -787,9 +799,9 @@ def _check_idle_redshift(
     """Section 2a: 'DatabaseConnections ~= 0'."""
     cluster = redshift_service.get_cluster(cluster_identifier, region=region)
     if cluster is None:
-        return _not_idle_result(cluster_identifier, "redshift", days)
+        return not_idle_result(cluster_identifier, "redshift", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         cluster_identifier,
         "redshift",
         days,
@@ -812,9 +824,9 @@ def _check_idle_api_gateway(
     API's `name`, not its `id` -- see ApiGatewayRestApi's docstring."""
     api = api_gateway_service.get_api(resource_id, region=region)
     if api is None:
-        return _not_idle_result(resource_id, "api_gateway", days)
+        return not_idle_result(resource_id, "api_gateway", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         resource_id,
         "api_gateway",
         days,
@@ -844,9 +856,9 @@ def _check_idle_cloudfront(
     False for this type, same documented gap as EIP/Lambda."""
     distribution = cloudfront_service.get_distribution(distribution_id, region=region)
     if distribution is None:
-        return _not_idle_result(distribution_id, "cloudfront", days)
+        return not_idle_result(distribution_id, "cloudfront", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         distribution_id,
         "cloudfront",
         days,
@@ -872,12 +884,12 @@ def _check_idle_opensearch(
     extra STS call."""
     domain = opensearch_service.get_domain(domain_name, region=region)
     if domain is None:
-        return _not_idle_result(domain_name, "opensearch", days)
+        return not_idle_result(domain_name, "opensearch", days)
     account_id = domain.account_id
     if not account_id:
-        return _not_idle_result(domain_name, "opensearch", days)
+        return not_idle_result(domain_name, "opensearch", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         domain_name,
         "opensearch",
         days,
@@ -903,9 +915,9 @@ def _check_idle_kinesis(
     """Section 2a: 'IncomingRecords ~= 0'."""
     stream = kinesis_service.get_stream(stream_name, region=region)
     if stream is None:
-        return _not_idle_result(stream_name, "kinesis", days)
+        return not_idle_result(stream_name, "kinesis", days)
 
-    return _check_idle_via_metrics(
+    return check_idle_via_metrics(
         stream_name,
         "kinesis",
         days,

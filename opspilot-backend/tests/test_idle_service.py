@@ -615,7 +615,7 @@ def test_lambda_zero_invocations_whole_window_is_idle(
     assert result.idle_days == 7
     # "days=7" means 7 distinct calendar days including today, i.e.
     # today-6 through today -- not today-7 (see
-    # _check_idle_via_metrics' zero_fill_missing_days docstring).
+    # check_idle_via_metrics' zero_fill_missing_days docstring).
     assert result.idle_since == (NOW - timedelta(days=6)).date()
     assert result.idle_since_is_estimated is False
 

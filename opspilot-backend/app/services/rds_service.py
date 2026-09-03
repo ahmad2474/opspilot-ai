@@ -29,6 +29,10 @@ def list_instances(region: str | None = None) -> RdsCard:
                         if s.get("SubnetIdentifier")
                     ],
                     vpc_id=subnet_group.get("VpcId"),
+                    read_replica_db_instance_identifiers=list(
+                        raw.get("ReadReplicaDBInstanceIdentifiers", []) or []
+                    ),
+                    backup_retention_period=raw.get("BackupRetentionPeriod"),
                 )
             )
     return RdsCard(instances=instances, count=len(instances))

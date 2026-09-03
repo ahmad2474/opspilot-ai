@@ -30,18 +30,13 @@ def scan_region(
         ),
     ] = False,
 ) -> str:
-    """Scan one AWS region across all 15 roadmap-scoped resource types
-    (ec2, ebs, rds, eip, elb, lambda, nat_gateway, dynamodb, elasticache,
-    sagemaker, redshift, api_gateway, cloudfront, opensearch, kinesis) --
-    returns every resource found plus its idle/cost status, and
-    account-wide totals (monthly_spend, idle_count, idle_monthly_waste).
-    Use this for broad "what's running / what's this costing me in
-    <region>" questions rather than calling check_idle/estimate_cost
-    resource-by-resource. If the underlying scan hits a cooldown (a scan
-    for this region ran too recently -- still returns any cached data
-    alongside the notice), an unrecognized region, or an AWS failure with
-    no prior data, the tool reports that plainly rather than fabricating
-    results.
+    """Scan one region across all 15 tracked resource types -- returns
+    every resource found plus its idle/cost status, and account-wide
+    totals (monthly_spend, idle_count, idle_monthly_waste). Use for broad
+    "what's running/costing in <region>" questions instead of
+    check_idle/estimate_cost per resource. On a cooldown (still returns
+    cached data), unrecognized region, or AWS failure with no prior data,
+    reports that plainly rather than fabricating results.
     """
     logger.info("tool_call scan_region region=%s force=%s", region, force)
     # scan_service.scan_region_as_dict() is the single place this

@@ -36,6 +36,40 @@ const API_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour — short-lived, refreshed auto
 // opspilot-backend/app/core/security.py's AUTH_UNAVAILABLE_MESSAGE).
 const AUTH_UNAVAILABLE_MESSAGE = "Authentication is unavailable — please try again later.";
 
+// ADMIN_PASSWORD_HASH is stored base64-encoded in .env, not as a raw
+// bcrypt hash. Reason: a raw bcrypt hash's literal `$` characters collide
+// with Next.js's own .env-loader variable-expansion syntax (`$2b$10$...`
+// gets silently mangled to `""` unless every `$` is manually escaped as
+// `\$` -- previously handled by a documentation-only warning in
+// .env.local.example, which works but is a foot-gun anyone regenerating
+// the hash can easily forget). Base64 removes the problem at its source:
+// the encoded value can never contain a literal `$`, so there is nothing
+// left for the expander to misinterpret, regardless of what tool
+// generated the underlying hash. See .env.local.example for the
+// hash-then-encode one-liner.
+function decodeAdminPasswordHash(): string {
+  const raw = process.env.ADMIN_PASSWORD_HASH;
+  if (!raw) return "";
+  let decoded: string;
+  try {
+    decoded = Buffer.from(raw, "base64").toString("utf8");
+  } catch {
+    decoded = "";
+  }
+  // Every real bcrypt hash starts with one of these version prefixes --
+  // cheap sanity check that catches a misconfigured value (e.g. someone
+  // pasted the raw hash without base64-encoding it) right here, with a
+  // clear server-side log, instead of every login attempt afterward
+  // failing with no clue why.
+  if (!/^\$2[aby]\$/.test(decoded)) {
+    console.error(
+      "ADMIN_PASSWORD_HASH does not decode to a valid bcrypt hash -- make sure it's base64-encoded (see .env.local.example)."
+    );
+    return "";
+  }
+  return decoded;
+}
+
 function getAuthSharedSecret(): string {
   const secret = process.env.AUTH_SHARED_SECRET;
   if (!secret) {
@@ -145,7 +179,7 @@ export const authOptions: NextAuthOptions = {
       },
       async authorize(credentials) {
         const adminEmail = process.env.ADMIN_EMAIL;
-        const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
+        const adminPasswordHash = decodeAdminPasswordHash();
 
         // Best-effort attempted email for audit purposes — recorded even
         // when nothing else about the request can be trusted yet, since
