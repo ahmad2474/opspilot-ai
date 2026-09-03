@@ -2539,3 +2539,66 @@ it in a future session.
   No code changed as a result of this investigation. Revisit if/when
   `openai-agents-python#2137` ships a fix -- upgrading the pinned `agents` dependency at that point
   should resolve this with no further code change needed here.
+
+## Public release packaging (roadmap-phase2.md Section 4) — Step 5 of the updated build order
+- **Status: built, live-verified against the real AWS account, not yet reviewed.** Item 7
+  (LangGraph v2) explicitly held per the roadmap's own sequencing rule (needs v1 in front of real
+  usage first) — user confirmed 2026-09-03, revisit later, not now.
+- **`scripts/setup.py`** — the interactive wizard (roadmap's own Section 4.3 skeleton used as a
+  starting point, not followed blindly -- it was written without repo access and had two real bugs,
+  both caught and fixed before shipping, not after):
+  1. The skeleton's `bcrypt.hashpw(...).decode()` would have written a **raw** bcrypt hash
+     (containing literal `$` characters) straight to `.env.local` -- confirmed by reading
+     `opspilot-frontend/lib/auth.ts` that it expects the hash **base64-encoded** first (Next.js's
+     env loader treats `$` as variable-expansion syntax and silently truncates an unencoded hash to
+     nothing). Fixed: hash with Python's `bcrypt` (already a backend dependency, no new one added),
+     base64-encode before writing. Live-verified with a real dry-run: hashed a real password,
+     wrote it through the same encode/write/read/decode round trip the real app uses, confirmed
+     `bcrypt.checkpw` both accepts the correct password and rejects a wrong one.
+  2. The skeleton referenced `.env.example.local` (frontend) -- the real file is
+     `.env.local.example`. Fixed to the real name.
+  - Also fixed two bugs found only by actually running the scripts against the real connected AWS
+    account, not by reading the code: (a) `boto3.client("dynamodb")` with no explicit `region_name`
+    raised `NoRegionError` -- boto3's own env-var convention is `AWS_DEFAULT_REGION`, but this app's
+    established convention everywhere else (`app/aws/client.py`) is `AWS_REGION`; fixed by reading
+    `AWS_REGION` explicitly. (b) `setup.py`'s `provision_tables()` ran the provisioning script via
+    `subprocess` but only inherited the wizard's own `os.environ` -- the AWS credentials just
+    written by `setup_aws_credentials()` went to the `.env` *file*, never into the running
+    process's environment, so the subprocess wouldn't have seen them; fixed by explicitly merging
+    `_load_env(BACKEND_ENV)` into the subprocess's `env=`.
+  - Confirmed via live testing (not assumed) that IAM/STS clients resolve fine with no explicit
+    region (global endpoints) — only DynamoDB needed the fix.
+  - Auto-IAM-creation branch is opt-in, not default, matching the roadmap's own stated rationale
+    (handing a script `iam:CreateUser`/`iam:PutUserPolicy`/`iam:CreateAccessKey` is a real trust
+    decision the user should make consciously). Manual entry stays fully supported.
+- **`scripts/provision_tables.py`** — idempotent DynamoDB table creation (Path A). Table
+  names/schema (`id` String partition key, `PAY_PER_REQUEST`) verified against the actual
+  `put_item`/`get_item`/`Key=` calls in `investigation_service.py`/`mcp_auth_service.py`/
+  `audit_log_service.py`, not copied from the README's summary. **Live-verified twice against the
+  real account**: confirmed via a separate read-only `describe_table` check that all 3 tables
+  already exist in this account (from earlier live testing this session); then ran the actual
+  script and got a clean, correctly-attributed `AccessDeniedException` (this account's real
+  credentials are the app's own read-only runtime keys, which deliberately lack
+  `dynamodb:CreateTable` -- expected, and itself a small confirmation that the read-only posture
+  holds even against the setup tooling). Proves the region fix and the error-handling path both
+  work end to end; the `ResourceInUseException`-skip branch itself is simple, standard boto3
+  exception handling, not independently forced to execute against a real account (would have
+  needed deliberately over-privileged credentials just for the test).
+- **`scripts/terraform/`** — Path B, an alternative DynamoDB-only Terraform module (same 3
+  tables/schema, not a second design). **Not validated with the Terraform CLI** (not installed in
+  this environment) -- reviewed by hand against the AWS provider's documented resource shape only,
+  flagged plainly in the module's own README rather than silently claimed as verified.
+- **`README.md`** rewritten to reflect the actual current feature set (Tier 3 waste checks,
+  deletion-impact, the eval harness -- none of which were in the pre-Phase-2 README), quickstart
+  updated to lead with the new wizard while keeping the manual path fully documented, known
+  limitations extended with the LLM-provider-reliability findings from earlier this session, "What's
+  next" corrected (removed the retired write-action item, added the LangGraph v2 sequencing note).
+- **Repo hygiene checklist**: `.env`/`.env.local` confirmed never tracked (already true);
+  `docs/iam-policy.json` confirmed still uses the `<YOUR_ACCOUNT_ID>` placeholder (already true);
+  `LICENSE` added (MIT, matching the roadmap's stated default); `docs/SECURITY.md`'s disclosure
+  contact already had a real personal email from before this session (a pre-existing conscious
+  choice on an already-public repo, not re-litigated); `.github/workflows/ci.yml` already covers
+  backend lint+test+Docker build and frontend lint+build, confirmed matching the checklist's
+  requirement with no changes needed.
+- **Not yet done**: `security-reviewer`/`code-reviewer` haven't looked at any of this. Nothing in
+  this section is committed yet.
