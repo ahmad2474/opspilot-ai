@@ -87,7 +87,25 @@ def ensure_env_files() -> None:
 def append_env(path: Path, key: str, value: str) -> None:
     """Upsert, not append-only -- replaces an existing KEY=... line if
     present, so re-running the wizard after a failed step (or just to
-    rotate a value) doesn't leave duplicate keys behind."""
+    rotate a value) doesn't leave duplicate keys behind.
+
+    security-reviewer finding, 2026-09-03, fixed same day: a value
+    containing an embedded newline (e.g. a credential with a stray
+    newline from a clipboard paste) would silently inject an extra,
+    attacker- or accident-controlled KEY=VALUE line into the file --
+    live-verified the exploit shape before fixing it, not just reasoned
+    about. A trailing newline (the common, harmless case -- most paste
+    sources add one) is stripped silently; anything left after that is a
+    genuine embedded newline and gets rejected with a clear error rather
+    than silently written, since the caller almost certainly didn't mean
+    to paste a multi-line value into a single env var.
+    """
+    value = value.rstrip("\r\n")
+    if "\n" in value or "\r" in value:
+        raise ValueError(
+            f"Value for {key} contains an embedded newline -- this looks like a bad paste, "
+            "not a real single-line value. Re-enter it without the line break."
+        )
     lines = path.read_text().splitlines(keepends=True) if path.exists() else []
     prefix = f"{key}="
     for i, line in enumerate(lines):

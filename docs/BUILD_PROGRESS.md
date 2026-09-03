@@ -2600,5 +2600,17 @@ it in a future session.
   choice on an already-public repo, not re-litigated); `.github/workflows/ci.yml` already covers
   backend lint+test+Docker build and frontend lint+build, confirmed matching the checklist's
   requirement with no changes needed.
-- **Not yet done**: `security-reviewer`/`code-reviewer` haven't looked at any of this. Nothing in
-  this section is committed yet.
+- **Reviewed 2026-09-03** (`security-reviewer` done, `code-reviewer` in progress). `security-reviewer`:
+  no credential leaks, no privilege escalation, IAM auto-creation path correctly gated and
+  least-privilege only, `docs/iam-policy.json` confirmed unchanged/still placeholder, no secret
+  printed/logged anywhere (checked every `print()` call against what it references), static
+  long-lived credentials from `_create_iam_user()` confirmed as operationalizing an already-
+  documented `SECURITY.md` §3 tradeoff, not new drift. **One real finding, fixed same day**:
+  `append_env()` had no sanitization against an embedded newline in a pasted value (AWS secret key,
+  LLM API key, etc.) — could silently inject an extra, unintended `KEY=VALUE` line into `.env`/
+  `.env.local`. Reviewer live-demonstrated the exact injection shape, not just described it in the
+  abstract. Fixed: a trailing newline (the common, harmless paste artifact) is stripped silently;
+  anything left after that raises a clear `ValueError` naming which field and why, rather than
+  writing a corrupted file. Live re-verified against the reviewer's own exact reproduction (now
+  correctly rejected, file left unmodified) and against the harmless trailing-newline case (still
+  silently accepted, no false-positive) and the full wizard dry-run flow (unaffected).
