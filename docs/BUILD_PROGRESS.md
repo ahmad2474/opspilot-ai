@@ -2050,11 +2050,14 @@ progress: **icons → Tier 3 waste checks → deletion-impact v1 → eval harnes
 |---|---|---|---|
 | Galaxy Dashboard AWS icons | `frontend-agent` | 1.5 | done |
 | Tier 3 waste-check expansion, Batch A | `backend-agent` | 1.1–1.4 | done |
-| Tier 3 waste-check expansion, Batch B (ECS/EKS, Savings Plan/RI, Compute Optimizer) | `backend-agent` | 1.2, 1.3 | not started |
-| Deletion-impact v1 (fixed-depth) | `backend-agent` | 3.0, 3.1 | not started |
-| Eval harness | `eval-agent` (new) | 2 | not started |
+| Tier 3 waste-check expansion, Batch B (ECS/EKS, Savings Plan/RI, Compute Optimizer) | `backend-agent` | 1.2, 1.3 | done |
+| Deletion-impact v1 (fixed-depth), backend | `backend-agent` | 3.0, 3.1 | done |
+| **Deletion-impact UI — "Check deletion impact" button in the resource detail panel** (not in the original roadmap doc; user-requested follow-up, 2026-09-03) | `frontend-agent` (new queue entry) | 3.1 (UI surface for the already-shipped backend tool) | **queued, not started** — do together with the eval-harness resumption below, same session |
+| Eval harness | `eval-agent` (new) | 2 | **in progress, paused mid-build** — fixtures/oracle/grading/question-bank/CI all built and syntactically valid (see its own section below), stopped cleanly mid-verification at the user's request to resume later, not reviewed yet |
 | Deletion-impact v2 (adaptive-depth, LangGraph) | `langgraph-agent` (new) | 3.2, 3.3 | not started |
 | Public release packaging | `devops-agent` (new) | 4 | not started |
+
+Currently only the deletion-impact backend exists — no dashboard UI surface for it yet (`check_deletion_impact` is reachable via dashboard API/MCP/chat, but the galaxy view has no button/panel for it). The queued frontend row above closes that gap; explicitly deferred until the eval-harness work resumes so both land in the same pass rather than as two separate frontend-touching sessions.
 
 ## Subagent roster update
 Created three new agent definitions in `.claude/agents/`: `eval-agent.md` (sonnet — correctness-critical,
@@ -2178,6 +2181,57 @@ it in a future session.
   gracefully with `OptInRequired`/`SubscriptionRequiredException` (those services were never
   activated on this account) and contributed 0 resources without blanking the rest of the scan —
   expected behavior per the app's existing graceful-degradation design, not a bug.
+
+## Deletion-impact analysis v1 (roadmap-phase2.md §3)
+- **Status: done — built, reviewed, all clean.** Replaces the permanently-retired Step 8
+  write-action layer (§3.0): the IAM policy stays `Describe*`/`List*`/`Get*`/`pricing:*`-only
+  forever, and this tool answers "what would happen if I deleted/terminated this" through
+  read-only analysis instead. Built by `backend-agent`.
+- **Tool**: `check_deletion_impact(resource_type, resource_id)` for `ec2`/`rds`/`ebs`, returning
+  `will_be_removed` / `will_persist_and_keep_costing` (each with a real dollar figure where one
+  exists) / `behavioral_warnings` / `never_affected` / `check_errors`. Wired through all three
+  front doors. v1 uses this codebase's existing `ThreadPoolExecutor` fan-out pattern (same shape as
+  `scan_service.py`'s region-scan concurrency) — deliberately not LangGraph; that's a separate v2
+  (adaptive-depth fan-out), scoped to `langgraph-agent`, only after this v1 has shipped and seen
+  real usage.
+- **Design**: two kinds of fact, handled differently per the roadmap's own rule — queryable
+  per-resource facts (EBS `DeleteOnTermination`, EIP association, ASG membership, LB target
+  registration) are always queried live, never assumed; static resource-type-level facts (EC2/RDS/
+  EBS deletion behavior) were already verified in the roadmap doc and encoded as data rather than
+  re-derived. A resource-type's synthesizer calls the *existing* per-type services
+  (`ec2_service`/`rds_service`/`ebs_service`/`eip_service`/`snapshot_service`/`cost_service`) rather
+  than duplicating AWS calls — genuinely a synthesis layer, not a new AWS-calling surface.
+- **Real find beyond the roadmap's literal spec**: added a `volume_currently_attached` behavioral
+  warning — AWS genuinely refuses `DeleteVolume` on an attached volume, a real and easy-to-miss
+  gotcha not explicitly named in the doc. Live-verified against a real attached root volume in the
+  user's account.
+- **Live IAM verification against the real account**: `autoscaling:DescribeAutoScalingInstances`/
+  `DescribeAutoScalingGroups` confirmed genuinely new (real `AccessDenied` naming each action) and
+  added to `docs/iam-policy.json`; `ec2:DescribeInstances`'s `DeleteOnTermination` field and
+  `ec2:DescribeAddresses` confirmed live; `elasticloadbalancing:DescribeTargetGroups` confirmed
+  already covered by the existing wildcard. Not live-verifiable (no RDS instances or LB target
+  registrations exist in this account): `DescribeTargetHealth`'s exact behavior and every RDS-side
+  fact (read-replica/backup-retention fields) — relied on documented boto3 shapes, flagged as such.
+- **Reviews, both clean**:
+  - `security-reviewer` ran this one at the highest scrutiny level in the project so far, given the
+    feature's entire premise is "permanently cannot mutate anything" — read every new/changed
+    AWS-calling function completely (not sampled) and individually grepped every call site for
+    mutating-verb patterns. **Zero mutating calls found anywhere.** IAM diff confirmed to add
+    exactly the two read-only autoscaling actions, nothing else. One doc-accuracy finding, fixed:
+    `docs/SECURITY.md` still described the write-action layer as "not built yet/deferred" rather
+    than the roadmap's actual "permanently retired" framing — updated in three places (intro,
+    IAM-policy summary, and the limitations table) to state the read-only guarantee as permanent
+    and name `check_deletion_impact` as its shipped reinforcement.
+  - `code-reviewer`: **no findings, no changes requested.** Independently verified all of: the EIP
+    post-deletion cost calculation (confirmed mathematically identical to `cost_service`'s own
+    idle-EIP formula), the snapshot cost-omission is deliberate/honest (not a silent $0), a live
+    ASG permission gap correctly surfaces via `check_errors` rather than a fabricated false
+    negative (tested), the `snapshot_service.py` refactor (`list_snapshots_for_source` extraction)
+    is behavior-preserving for the existing Batch A snapshot-sprawl tests (re-ran them specifically,
+    unchanged), and the `ThreadPoolExecutor` fan-out genuinely mirrors `scan_service.py`'s existing
+    pattern (one intentional, reasonable difference noted: unbounded worker count vs. `scan_service`'s
+    fixed cap, justified by this feature's small fixed check-count per resource type).
+- **Tests**: 438/438 pass (410 prior + 28 new), `ruff check .` clean.
 
 ## Tier 3 waste-check expansion — Batch B (roadmap-phase2.md §1.2–1.3)
 - **Status: done — built, reviewed, and all findings fixed.** (First review pass hit a session rate
@@ -2326,3 +2380,102 @@ it in a future session.
     call `cost_service.extract_usd_price` and deleting the local duplicate (better than just correcting
     the inaccurate comment, per the reviewer's own suggestion) — re-verified 373/373 passing, ruff clean,
     after the fix. Everything else in both changesets: clean.
+
+## Eval harness (roadmap-phase2.md Section 2) — status as of 2026-09-03
+- **Built** (prior session, uncommitted): fixtures (`eval/fixtures/golden_account.py`, moto-based),
+  oracle (`eval/oracle/build_oracle.py`, thin wrappers around real `services/` calls, never hand-typed),
+  5 YAML cases (`eval/cases/*.yaml`), deterministic + DeepEval-judge grading
+  (`eval/grading/`), `.github/workflows/eval.yml` CI wiring. Never reached a documented-done
+  checkpoint in this file — work paused mid-session, resumed today.
+- **Blocking bug found and fixed today, live-verified, not just reasoned about**: no timeout existed
+  anywhere in the LLM call path (`app/agent/providers.py`'s `AsyncOpenAI` client, `run_chat_turn`'s
+  provider-fallback loop in `app/agent/orchestrator.py`, or the frontend's `sendChatMessage` fetch).
+  A single real chat turn was clocked hanging **15m22s** end-to-end (Groq rejected instantly, Gemini
+  answered but then hit a real, separate, still-open bug — `400 Function call is missing a
+  thought_signature` — on the follow-up turn, and NVIDIA hung ~5 minutes per attempt across 3 internal
+  SDK retries before finally 504ing). This is almost certainly what stalled the original eval session:
+  `test_deterministic_cases.py` makes the identical `run_chat_turn` call per case.
+  - **Fix (TDD)**: new `opspilot_llm_provider_timeout_seconds` setting (45.0s default,
+    `app/core/config.py`); `run_chat_turn` wraps each provider's `Runner.run()` in
+    `asyncio.wait_for(...)` so a hung/slow provider is abandoned and the loop falls through instead of
+    waiting out internal retries. New `tests/test_orchestrator_provider_timeout.py` (2 tests: one-hung-
+    provider-falls-back, all-hung-raises-promptly) — RED confirmed first (real 10s wait with no fix),
+    then GREEN (0.09–0.28s). Frontend: `sendChatMessage` in `lib/api.ts` got a 3-minute
+    `AbortController`, mirroring `scanRegion`'s existing pattern (was previously the one fetch call in
+    this file with no timeout at all). 440/440 backend tests pass, `ruff check .` clean, `tsc`/`next
+    lint` clean. Live re-verified in the browser against real (still-degraded) providers: every
+    provider timed out cleanly at 45s, total request **135s**, versus the original 15m22s — a ~6.8x
+    bound, and now deterministic instead of open-ended. Not yet reviewed by `security-reviewer`/
+    `code-reviewer`.
+  - **NVIDIA disabled per user request** (2026-09-03, not a roadmap decision — a live operational
+    call): `.env`'s `NVIDIA_API_KEY` blanked with an explanatory comment (re-add the value to bring it
+    back). Blank key → `ProviderNotConfiguredError` → orchestrator skips it instantly, no `wait_for`
+    even invoked — confirmed via `Skipping unconfigured provider 'nvidia'` in the live log, request
+    time dropped to 90s (2 providers × 45s) on the next real test.
+- **First-ever completed (non-hung) `eval/` run today**: `pytest eval/ -k "not llm_judge"` —
+  **10/13 passed, 3 failed, 208.91s total** (previously: infinite/unusable). The 3 failures are **not**
+  eval-harness or application defects — both live providers are currently exhausted, confirmed from
+  the actual provider error bodies, not inferred:
+  - **Groq**: `413 Request too large... TPM Limit 8000, Requested 9878–9930`. This is a **structural**
+    problem, not a transient rate-limit blip that waiting out helps — a single request already exceeds
+    the account's entire per-minute token ceiling before the loop even runs once, because this app's
+    tool roster has grown to ~30 tools (Tier 3 waste checks + deletion-impact added since the
+    8044-token figure recorded earlier in this file). Groq is effectively unusable as primary on this
+    account's free tier until either the roster shrinks, per-question tool subsetting is added, or the
+    account is upgraded.
+  - **Gemini**: `429 RESOURCE_EXHAUSTED — GenerateRequestsPerDayPerProjectPerModel-FreeTier, limit 20`.
+    Exactly the daily-quota risk `eval/grading/judge_model.py`'s own docstring predicted in advance —
+    today's combined browser testing + eval reruns burned through the account's 20-request/day Gemini
+    free-tier allowance. This resets daily (not on Google's suggested 42s retry — that's a per-call
+    backoff hint, unrelated to the daily quota key), so it's expected to clear on its own.
+  - The 10 passes cover everything not gated on today's exhausted quota: all 8 fixture/oracle tests
+    (`test_oracle_correctness.py`, zero live calls), `test_out_of_scope_redirect` (got a real answer —
+    happened to land before quota ran out), `test_recall_accuracy` (zero live LLM calls by design, see
+    its own module docstring).
+- **Not yet done**: the Gemini `thought_signature` bug (blocks Gemini from ever completing a
+  tool-calling turn, independent of quota) and Groq's structural token-budget overrun are both
+  real, open bugs affecting the live chat product as much as the eval harness — deferred, not fixed,
+  per explicit user instruction ("we will figure it out later"). `test_judged_cases.py` (the DeepEval
+  judge tier) has not been run today at all. Harness has not yet been reviewed by `security-reviewer`/
+  `code-reviewer`. Nothing in this section is committed.
+
+### Groq token-budget fix (2026-09-03, same session)
+- **Status: fixed, live-verified.** Per explicit user request ("let's fix the Groq token budget
+  instead"), separate from the deferred items above. Root cause confirmed via real Groq error bodies,
+  not guessed: `AGENT_INSTRUCTIONS` (the system prompt) plus the ~30-tool schema roster had grown to
+  ~9878-9930 real tokens per request, above Groq's free-tier `openai/gpt-oss-20b` TPM=8000 ceiling --
+  a single request already exceeded the account's entire per-minute budget, so no amount of waiting
+  or retrying helped.
+- **Fix**: condensed `AGENT_INSTRUCTIONS` in `app/agent/orchestrator.py` -- every distinct fact
+  preserved (tool names, resource_type/field enum values, warnings, response-shape distinctions) but
+  the paragraph-per-resource format and three-part answer shape are now stated once instead of
+  re-explained in nearly every section, and rationale prose the model doesn't need to follow a rule
+  (e.g. why a table is unreadable in a narrow sidebar) was cut. ~15900 to ~7250 chars. Also trimmed
+  the heaviest tool docstrings/param descriptions (list_resources, scan_region,
+  check_deletion_impact, analyze_commitment_utilization, check_s3_waste, check_container_idle,
+  get_resource_health, check_idle, estimate_cost, get_rightsizing_recommendations, plus the shared
+  `_TYPE_CODES_HELP` 15-type-list constant reused by 3 tools) -- kept every enum value and
+  anti-hallucination guardrail (e.g. check_s3_waste's "never fabricate a last-accessed claim"), cut
+  restated rationale. Combined estimated footprint (system prompt + all tool schemas) went from
+  ~8566 to ~5598 tokens (chars/4 heuristic; real Groq tokenizer runs higher due to JSON-schema
+  overhead, confirmed empirically below, not assumed from the heuristic alone).
+- **Live-verified against the real account, iteratively, not just reasoned about**: first pass (after
+  trimming only `AGENT_INSTRUCTIONS`) still hit a `413` on 2 of 4 live eval cases, down from
+  ~9930 to ~8013 requested tokens -- confirmed the direction was right but insufficient. Second pass
+  (tool docstring trims) re-tested: **zero `413`s across a full `eval/ -k "not llm_judge"` run and
+  three individually re-run cases** (`test_idle_ec2_basic`, `test_young_resource_edge_case`,
+  `test_tag_injection` all previously 413'd, now pass or fail only on unrelated Groq
+  request-rate/Gemini daily-quota exhaustion from this session's own heavy repeated testing -- not
+  token size). Also directly verified the deletion-impact question (`check_deletion_impact`) and the
+  original scan_region question both succeed on Groq's first attempt now, the latter in 42.6s (real
+  AWS scan latency, not a token issue).
+- **Tests**: 440/440 backend tests pass (unchanged -- this diff touches only prompt/docstring text,
+  no logic), `ruff check .` clean. No test asserts on prompt/docstring content directly (nothing to
+  regress there), verification is the live Groq re-test above instead.
+- **Not fixed, deliberately out of scope for this pass**: the still-open Gemini `thought_signature`
+  bug and today's Gemini daily-quota exhaustion (resets on its own); Groq's current request-rate
+  throttling from this session's own repeated testing (also expected to clear on its own, not a code
+  issue). If the tool roster grows enough to threaten the 8000 TPM ceiling again, the next lever is
+  per-question tool subsetting, not further prompt-trimming -- noted directly in
+  `AGENT_INSTRUCTIONS`'s own new preamble comment.
+- Not yet reviewed by `security-reviewer`/`code-reviewer`. Nothing in this section is committed.
