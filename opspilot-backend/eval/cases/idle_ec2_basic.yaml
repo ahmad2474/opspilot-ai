@@ -1,0 +1,31 @@
+# Roadmap phase 2 Section 2.3 -- basic idle-count accuracy.
+#
+# The chat agent's answer to a broad "what's idle" question must agree
+# with scan_region's own oracle totals for the golden account -- this is
+# the eval harness's single most basic claim: ask the agent a question a
+# real user would ask, and check its answer against a number computed
+# straight from services/, never from another LLM's opinion.
+name: idle_ec2_basic
+description: >
+  How many resources are idle right now, and what's the combined monthly
+  waste, for the golden_account_v1 fixture.
+fixture: golden_account_v1
+oracle:
+  tool: scan_region
+question_template: >
+  Scan the {region} region and tell me exactly how many resources are
+  currently idle right now, and the combined monthly waste in dollars.
+checks:
+  - type: exact_number_match
+    field: totals.idle_count
+    label: idle resource count
+  - type: tolerance_number_match
+    field: totals.idle_monthly_waste
+    tolerance_pct: 5
+    label: combined idle monthly waste (USD)
+  - type: tool_trace_contains
+    tool: scan_region
+rubric: >
+  Every resource ID named in the answer as idle must actually appear in
+  the oracle's idle resource list for this scan. No invented resource IDs,
+  no resource claimed idle that the oracle reports as not idle.

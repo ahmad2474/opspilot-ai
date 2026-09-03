@@ -1,0 +1,84 @@
+name: Eval Harness
+
+# Roadmap phase 2 Section 2.6. Two jobs, split by cost/reliability, same
+# rationale the roadmap itself gives:
+#   - deterministic: fixture/oracle correctness (zero LLM calls, always
+#     runs) plus end-to-end answer-vs-oracle grading (one real call to
+#     whichever free-tier provider secret is configured -- $0 spend on
+#     this project's own Groq/Gemini free tiers, skips cleanly with no
+#     failure if neither secret is set on this repo). Every PR.
+#   - judged: DeepEval LLM-judge faithfulness metrics -- a second real
+#     judge-model call on top of the deterministic tier's chat-agent
+#     call. Gated behind the 'run-full-eval' label or a nightly cron,
+#     never every PR, per the roadmap's own cost/reliability split.
+#
+# Neither job ever needs AWS credentials -- every eval fixture is
+# moto-mocked (opspilot-backend/eval/fixtures/), never real AWS.
+
+on:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *" # nightly, 06:00 UTC -- runs the judged tier only
+
+jobs:
+  deterministic:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    defaults:
+      run:
+        working-directory: opspilot-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: opspilot-backend/requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: "Eval: deterministic tier (fixtures/oracle always; live answer-grading if a provider secret is set)"
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: pytest eval/ -v -k "not llm_judge"
+
+  judged:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'schedule' ||
+      contains(github.event.pull_request.labels.*.name, 'run-full-eval')
+    defaults:
+      run:
+        working-directory: opspilot-backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: opspilot-backend/requirements*.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Eval -- judged tier (DeepEval LLM-judge faithfulness)
+        # No OpenAI key anywhere -- the judge model is this project's own
+        # free-tier Groq/Gemini client (eval/grading/judge_model.py), per
+        # this build step's non-negotiable. Skips cleanly (not a failure)
+        # if neither secret is set on this repo. --reruns handles the
+        # occasional transient 5xx/overload a free-tier provider can
+        # return (live-verified during development; see this step's own
+        # report), the same way this project's chat agent already retries
+        # provider failures rather than treating one as fatal.
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: pytest eval/ -v -k "llm_judge" --reruns 2 --reruns-delay 5

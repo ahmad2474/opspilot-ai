@@ -1,3 +1,27 @@
 -r requirements.txt
-pytest==8.3.3
+pytest==9.1.1
 ruff==0.7.4
+
+# --- eval harness (docs/opspilot-ai-roadmap-phase2.md Section 2) ----------
+# moto: AWS mocking for eval/fixtures/ -- new pattern for this repo (every
+# existing test in tests/ mocks boto3 client objects directly via
+# unittest.mock instead). Confirmed empirically (not assumed) that moto
+# intercepts this app's app/aws/client.py get_*_client() factory functions
+# correctly despite their @lru_cache'd Session and client-creation lock --
+# see eval/fixtures/ docstrings for the verification.
+moto[ec2,rds,dynamodb,apigateway]==5.2.3
+# freezegun: backdates LaunchTime/CreateTime/InstanceCreateTime for the
+# "resource is N days old" fixtures -- moto stamps these with the real
+# wall-clock time at creation and has no caller-supplied-timestamp option.
+freezegun==1.5.5
+# deepeval: primary CI gate for the eval harness (ToolCorrectnessMetric,
+# FaithfulnessMetric/HallucinationMetric) -- pytest-native, matches this
+# repo's existing test convention. Pulling this in forced two bumps above
+# the previous exact pins in requirements.txt: pydantic-settings (was
+# ==2.7.0, deepeval requires >=2.10.1) and python-dotenv (was ==1.0.1,
+# deepeval requires >=1.1.1). It also pulls in pytest 9.x, unpinned by
+# deepeval itself -- bumped the pin above from 8.3.3 to the resolved 9.1.1
+# for the same reason. All three bumps were verified safe, not assumed:
+# the full existing tests/ suite (438 tests) was re-run against a clean
+# venv built from these exact pins and passes unchanged.
+deepeval==4.2.0

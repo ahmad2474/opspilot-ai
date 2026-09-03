@@ -1,0 +1,35 @@
+# Roadmap phase 2 Section 2.3 -- recall-accuracy case for investigation
+# memory: a recalled past investigation must match, not contradict, the
+# current one.
+#
+# Shape note: unlike every other case in this bank, this one is not "ask
+# the chat agent a question, grade its answer against an oracle." It
+# grades app/services/investigation_service.py's own recall logic
+# directly (find_similar_past_investigations' cosine-similarity ranking)
+# against a fresh check_idle oracle for the same resource -- both are
+# real services/ calls, no chat agent/LLM turn involved, which is exactly
+# why this case belongs in the deterministic tier with zero live-LLM
+# dependency for its *ranking* assertion (see
+# eval/test_deterministic_cases.py's test_recall_accuracy for the actual
+# implementation and why its embedding step is a deterministic stand-in,
+# not a live Gemini call, in the tier that runs on every PR).
+name: recall_accuracy
+description: >
+  A past investigation that concluded "this EC2 instance is idle" must be
+  recalled (ranked above an unrelated past investigation) when a fresh
+  question about the same resource comes in, and its conclusion must not
+  contradict a fresh oracle check_idle call for that same resource.
+fixture: golden_account_v1
+oracle:
+  tool: check_idle
+  resource_type: ec2
+  resource_id_field: idle_ec2_instance_id
+checks:
+  - type: recall_ranks_related_investigation_first
+  - type: recall_conclusion_does_not_contradict_oracle
+rubric: >
+  The recalled past investigation's conclusion must agree with (not
+  contradict) what a fresh check_idle call says about the same resource
+  right now -- both should describe it as idle. An unrelated past
+  investigation about a different resource/topic must not outrank the
+  genuinely related one.

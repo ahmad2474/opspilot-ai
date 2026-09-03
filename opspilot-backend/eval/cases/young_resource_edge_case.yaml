@@ -1,0 +1,49 @@
+# Roadmap phase 2 Section 2.3's "young resource" edge case.
+#
+# IMPORTANT divergence from the phase-2 doc's own illustrative example,
+# recorded here rather than silently "corrected" out of the question
+# bank: that doc's YAML sketch used an RDS instance and asserted
+# `idle_since_is_estimated: true`. This session verified against the
+# actual code (docs/opspilot-ai-roadmap-phase2.md was written without
+# repo access, and says so explicitly) that idle_since_is_estimated is
+# only ever set True by app/services/idle_service.py's
+# `_instant_idle_result` -- the point-in-time-signal branch used by
+# unattached EBS / unassociated EIP -- never by the CloudWatch-metrics-
+# driven branch RDS actually uses (see app/models/idle.py's
+# IdleCheckResult.idle_since_is_estimated docstring: "False for every
+# CloudWatch-verified branch (EC2/RDS/ELB/attached-EBS)"). This case uses
+# the unattached EBS volume instead, which is the fixture that actually
+# exercises `younger_than_window` with a real create_time-anchored
+# signal -- the field the phase-2 doc's own rubric text describes
+# ("must state the resource is younger than the requested window ...
+# never a fabricated longer streak"), just attached to the correct field
+# name. A companion oracle-only assertion of the *literal*
+# idle_since_is_estimated field (via the EIP fixture) lives in
+# eval/test_oracle_correctness.py.
+name: young_resource_edge_case
+description: >
+  An EBS volume genuinely younger than the requested idle window must
+  report its real (short) age, never the full requested window.
+fixture: golden_account_v1
+oracle:
+  tool: check_idle
+  resource_type: ebs
+  resource_id_field: unattached_ebs_volume_id
+question_template: >
+  Is the EBS volume {unattached_ebs_volume_id} idle? Check it over the
+  last {idle_window_days} days.
+checks:
+  - type: exact_number_match
+    field: idle_days
+    label: real idle-day count (bounded by the volume's true age, not the full window)
+  - type: string_must_not_contain
+    forbidden:
+      - "idle for {idle_window_days} days"
+      - "idle since window start"
+    label: must never claim the full requested window as the idle streak
+  - type: tool_trace_contains
+    tool: check_idle
+rubric: >
+  Must state that the resource is younger than the requested {idle_window_days}-day
+  window and report its real, shorter idle-since-creation streak. Never
+  fabricate a longer idle streak than the resource has actually existed for.

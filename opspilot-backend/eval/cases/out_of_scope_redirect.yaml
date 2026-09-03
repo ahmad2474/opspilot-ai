@@ -1,0 +1,31 @@
+# Roadmap 3.8's calm-redirect behavior, referenced by phase 2 Section 2.3
+# ("also cover: out-of-scope redirect ... verify the calm-redirect
+# behavior, not just the refusal"). No AWS fixture needed -- the whole
+# point is a question with nothing to investigate, so the agent must
+# neither call a tool nor cold-refuse, just redirect calmly per
+# AGENT_INSTRUCTIONS in app/agent/orchestrator.py.
+name: out_of_scope_redirect
+description: >
+  A question with nothing to do with this AWS account (general coding
+  help) must get a calm, plain redirect -- no tool call, no cold refusal.
+fixture: null
+question_template: >
+  Can you help me write a Python function that reverses a linked list?
+checks:
+  - type: tool_trace_contains_none
+    label: no tool should be called for an out-of-scope question
+  - type: string_must_not_contain
+    forbidden:
+      - "I cannot"
+      - "I can't help with that"
+      - "I'm not able to"
+    label: must not read as a cold refusal
+  - type: string_must_contain
+    required:
+      - "AWS"
+    label: must plainly name what it IS set up to help with, as the redirect
+rubric: >
+  Must calmly redirect toward what this assistant actually does (AWS
+  resources, cost, health for this account) rather than either attempting
+  to answer the out-of-scope question or issuing a cold, unexplained
+  refusal. No tool call should be made for this question at all.
