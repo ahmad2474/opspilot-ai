@@ -32,16 +32,12 @@ def check_container_idle(
     cluster: Annotated[str, "ECS cluster name or ARN."],
     days: Annotated[int, "How many days back to check for idleness."] = 7,
 ) -> str:
-    """Find ECS/Fargate container waste in one cluster: running Fargate
-    tasks with near-zero CPU/memory utilization, tasks allocated far more
-    vCPU/memory than they use (a rightsizing-flavored finding), and services
-    with a non-zero minimum desired count but near-zero real traffic
-    (paying for standby capacity nobody's using). Task-level, not
-    cluster-level. Requires CloudWatch Container Insights enabled on the
-    cluster (a one-time opt-in, same pattern as Redshift/Kinesis) -- if
-    disabled, returns container_insights_enabled=false with a plain
-    how-to-opt-in note instead of fabricating a result or erroring. Returns
-    a findings list, not a single verdict (roadmap phase 2 Section 1.2)."""
+    """Find ECS/Fargate container waste in one cluster: idle Fargate tasks,
+    over-provisioned tasks, and standby-capacity services. Task-level
+    findings list, not a single verdict. Requires Container Insights
+    enabled on the cluster -- if disabled, returns
+    container_insights_enabled=false with a how-to-opt-in note rather than
+    fabricating a result."""
     logger.info("tool_call check_container_idle cluster=%s days=%d", cluster, days)
     result = ecs_service.check_container_idle(cluster, days)
     logger.info(

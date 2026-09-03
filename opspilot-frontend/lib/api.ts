@@ -327,12 +327,39 @@ export class ScanCooldownError extends Error {
   }
 }
 
+// Live-verified bug, 2026-09-03: with no deadline anywhere in the LLM call
+// path, a single /chat request hung 15m22s (Groq rejected instantly, Gemini
+// answered but then failed a follow-up turn, NVIDIA hung ~5 minutes per
+// retry across 3 attempts) with this UI spinning on "Investigating..." the
+// entire time -- no feedback, no way to tell a hang from a slow-but-working
+// answer. The backend fix (opspilot_llm_provider_timeout_seconds, 45s
+// default) now bounds each of the 3 fallback providers, so a fully-exhausted
+// chain gives up in well under 135s. 3 minutes matches SCAN_TIMEOUT_MS's own
+// headroom-above-observed-worst-case pattern above.
+const CHAT_TIMEOUT_MS = 3 * 60 * 1000;
+
 export async function sendChatMessage(message: string): Promise<ChatResponse> {
-  const res = await fetch(`${API_BASE_URL}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...(await authHeaders()) },
-    body: JSON.stringify({ message }),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), CHAT_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...(await authHeaders()) },
+      body: JSON.stringify({ message }),
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(
+        `The agent didn't respond within ${Math.round(CHAT_TIMEOUT_MS / 1000)}s. Try again.`
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => null);

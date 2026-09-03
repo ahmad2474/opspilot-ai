@@ -28,15 +28,12 @@ def estimate_cost(
     resource_type: Annotated[
         str,
         (
-            "Resource type to estimate cost for: one of the 15 roadmap-scoped "
-            "types -- 'ec2', 'ebs', 'rds', 'eip', 'elb', 'lambda', "
-            "'nat_gateway', 'dynamodb', 'elasticache', 'sagemaker', 'redshift', "
-            "'api_gateway', 'cloudfront', 'opensearch', 'kinesis'."
+            "One of: ec2, ebs, rds, eip, elb, lambda, nat_gateway, dynamodb, "
+            "elasticache, sagemaker, redshift, api_gateway, cloudfront, "
+            "opensearch, kinesis."
         ),
     ],
-    resource_id: Annotated[
-        str, "The resource ID to estimate cost for, e.g. an EC2 instance ID."
-    ],
+    resource_id: Annotated[str, "The resource ID to estimate cost for."],
     start: Annotated[
         str | None,
         (
@@ -48,12 +45,10 @@ def estimate_cost(
         str | None, "ISO 8601 end of the window. Omit to default to now."
     ] = None,
 ) -> str:
-    """Estimate cost for a resource via the AWS Pricing API (on-demand list
-    price -- not actual billed cost). Returns both projected_monthly (rate
-    x a full ~730-hour month -- what drives star/bubble sizing) and
-    incurred_so_far (rate x hours actually elapsed in the requested
-    window, capped at the resource's own age) -- these are two distinct
-    numbers and must never be conflated with each other."""
+    """Estimate cost via AWS Pricing API (on-demand list price, not actual
+    billed cost). Returns projected_monthly (rate x ~730hr month) and
+    incurred_so_far (rate x hours elapsed in the window, capped at the
+    resource's age) -- two distinct numbers, never conflate them."""
     logger.info(
         "tool_call estimate_cost resource_type=%s resource_id=%s start=%s end=%s",
         resource_type,

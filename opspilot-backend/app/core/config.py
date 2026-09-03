@@ -80,6 +80,21 @@ class Settings(BaseSettings):
     nvidia_model: str = "meta/llama-3.3-70b-instruct"
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
 
+    # Per-provider deadline for one run_chat_turn attempt (app/agent/
+    # orchestrator.py). Live-verified bug, 2026-09-03: with no deadline
+    # anywhere in the LLM call path, a single chat turn hung 15m22s --
+    # Groq rejected instantly (413), Gemini answered but then failed a
+    # follow-up turn (400), and NVIDIA hung on Runner.run for ~5 minutes
+    # per attempt across 3 internal SDK retries before finally giving up.
+    # run_chat_turn wraps each provider's Runner.run in
+    # asyncio.wait_for(..., timeout=this) so a dead/hanging provider is
+    # abandoned and the next one tried, instead of blocking the whole
+    # turn. 45s is generous headroom over every real successful call
+    # observed in this app's logs (a full multi-tool-call turn has taken
+    # well under 15s), while still cutting off a hang like NVIDIA's long
+    # before it costs minutes.
+    opspilot_llm_provider_timeout_seconds: float = 45.0
+
     # --- App -----------------------------------------------------------
     opspilot_app_env: Literal["local", "ci", "prod"] = "local"
     opspilot_cors_origins: str = "http://localhost:3000"

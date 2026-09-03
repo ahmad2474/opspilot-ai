@@ -27,17 +27,13 @@ def check_s3_waste(
         int, "Age threshold in days for the incomplete-multipart-upload sub-check."
     ] = 7,
 ) -> str:
-    """Check an S3 bucket for storage/lifecycle waste: no lifecycle policy
-    at all, incomplete multipart uploads older than `days` (silent storage
-    cost nobody looks for manually), and versioning enabled with no
-    noncurrent-version-expiration rule. Returns a findings list per bucket
-    (zero or more independent flags), not a single is_idle-style boolean --
-    a bucket can have none, some, or all three at once. Also includes a
-    best-effort storage-class price-gap note (S3 Standard vs. a colder
-    tier) where the Pricing API lookup succeeds. Does NOT flag 'objects
-    with no recent access' -- that needs S3 Storage Lens or Server Access
-    Logging enabled to measure honestly, and this app never fabricates a
-    last-accessed claim without one of those."""
+    """Check an S3 bucket for waste: no lifecycle policy, incomplete
+    multipart uploads older than `days`, versioning with no
+    noncurrent-version-expiration rule. Findings list per bucket (0-3
+    independent flags, never a single boolean), plus a best-effort
+    storage-class price-gap note where pricing lookup succeeds. Does NOT
+    flag 'no recent access' -- that needs Storage Lens/Access Logging;
+    never fabricate a last-accessed claim without one."""
     logger.info("tool_call check_s3_waste bucket=%s days=%d", bucket, days)
     result = s3_service.check_s3_waste(bucket, days=days)
     logger.info(

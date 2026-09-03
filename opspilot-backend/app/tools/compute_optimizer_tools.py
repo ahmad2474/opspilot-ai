@@ -19,15 +19,12 @@ logger = logging.getLogger("app.tools.compute_optimizer")
 def get_rightsizing_recommendations(
     resource_type: Annotated[str, "One of: 'ec2', 'ebs', 'lambda', 'ecs' (ECS-on-Fargate)."],
 ) -> str:
-    """Get AWS Compute Optimizer's own ML-driven rightsizing recommendations
-    -- NOT idle detection. Catches waste idle-checking structurally cannot:
-    a busy-but-oversized resource is never idle, but might cost multiples of
-    what it needs to. Findings are AWS-generated verdicts (Overprovisioned/
-    Underprovisioned/NotOptimized), not this app's own computed threshold --
-    present them as AWS's own recommendation, don't restate them as if this
-    app derived them. Requires a one-time account-level Compute Optimizer
-    opt-in -- if the account isn't enrolled, returns enrolled=false with a
-    plain how-to-opt-in note instead of erroring."""
+    """AWS Compute Optimizer's own ML-driven rightsizing verdicts (NOT idle
+    detection -- catches a busy-but-oversized resource idle-checking
+    can't). Findings are AWS-generated (Overprovisioned/Underprovisioned/
+    NotOptimized) -- present as AWS's recommendation, not this app's own.
+    Requires account-level opt-in; if not enrolled, returns
+    enrolled=false with a how-to-opt-in note instead of erroring."""
     logger.info("tool_call get_rightsizing_recommendations resource_type=%s", resource_type)
     result = compute_optimizer_service.get_rightsizing_recommendations(resource_type)
     logger.info(
