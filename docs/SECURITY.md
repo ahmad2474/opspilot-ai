@@ -18,8 +18,13 @@ what would need to change before this could be safely exposed to untrusted netwo
 independent users.
 
 Read access to AWS is read-only by design (Section 2 below). No AWS resource can be modified,
-stopped, or deleted by this app today — the roadmap's write-action/approval layer (Section 6,
-build-order Step 8) is intentionally not built yet.
+stopped, or deleted by this app — **permanently, not "not yet."** The originally-planned write-
+action/approval layer (Section 6, build-order Step 8) was retired outright (Phase 2 roadmap
+Section 3.0), not merely deferred: this app's IAM policy stays `Describe*`/`List*`/`Get*`/
+`pricing:*`-only forever, by policy, not by convention. In its place, `check_deletion_impact`
+(Phase 2 Section 3) answers "what would happen if I deleted/terminated this" entirely through
+read-only analysis — the useful part of a write-approval feature (knowing the consequences)
+without ever taking on the risk of a mutating call.
 
 ## 2. Authentication
 
@@ -108,10 +113,10 @@ added — reproduced in summary here:
 - **Read-only statement (`OpspilotReadOnly`)**: every action is `Describe*`/`List*`/`Get*` (or the
   read-shaped equivalent — `apigateway:GET`, `cloudwatch:GetMetricData`, `pricing:GetProducts`,
   etc.) against `Resource: "*"`. **No write, modify, stop, terminate, or delete permission against
-  any monitored AWS resource exists anywhere in this policy.** This directly implements the
-  roadmap's "every IAM role is read-only ... no write access exists until the write-action/
-  approval layer is explicitly built later" rule (that layer, build-order Step 8, is not built —
-  see Section 8 below).
+  any monitored AWS resource exists anywhere in this policy.** This is now a *permanent* property
+  of the app, not a temporary one pending a future write-action layer — Phase 2 roadmap Section 3.0
+  retired that layer outright (build-order Step 8; see Section 8 below) specifically so this
+  statement could be made without a "for now" attached.
 - **Two write-capable statements**, both narrowly ARN-scoped to this app's own bookkeeping
   DynamoDB tables, never to a monitored AWS resource:
   - `OpspilotInvestigationMemoryWrite` — `PutItem`/`Scan` on `opspilot-investigations` only (the
@@ -244,7 +249,7 @@ the feature it's auditing.
 | Static, long-lived AWS IAM user keys (Section 3) | Accepted for now | Hosting for/by anyone other than the single local operator |
 | No rate limiting/lockout (login, MCP `call_tool`) | Accepted for now | Any internet-facing deployment |
 | GitHub push-protection on/off status unverified | Needs manual check | N/A — repo-owner action, not code |
-| Write-action/approval layer not built | Not started, deferred | Any AWS-mutating feature (stop/terminate, etc.) — build-order Step 8, explicitly last and gated on a separate UX decision |
+| Write-action/approval layer | **Retired permanently** (Phase 2 roadmap §3.0), not deferred | N/A — this is a closed decision, not a pending one. Replaced by the read-only `check_deletion_impact` (§3), which answers "what would this affect" without ever mutating AWS |
 | Multi-account / cross-account role assumption | Not started, deferred | Supporting more than one connected AWS account (roadmap Section 2/8) |
 | MCP tool calls not individually audit-logged | Accepted, covered by app logs instead | Per-user MCP attribution (not meaningful until MCP moves beyond one shared token) |
 

@@ -45,6 +45,30 @@ class SnapshotFinding(BaseModel):
     message: str
 
 
+class SnapshotSummary(BaseModel):
+    """Minimal per-source snapshot listing, no retention/orphan analysis --
+    used by deletion_impact_service (roadmap phase 2 Section 3.1) to
+    enumerate the snapshots taken from one specific EBS volume/RDS
+    instance ("snapshots persist independently" fact). Produced by
+    list_snapshots_for_source() below, which reuses the exact same
+    describe_snapshots/describe_db_snapshots + normalization
+    check_snapshot_sprawl's own per-type helpers already do.
+    """
+
+    snapshot_id: str
+    source_resource_id: str | None
+    age_days: int
+    size_gb: int | None
+    snapshot_type: str | None = Field(
+        default=None,
+        description=(
+            "RDS only -- DescribeDBSnapshots' SnapshotType ('manual', "
+            "'automated', etc.). Always None for EBS, which has no such "
+            "distinction on DescribeSnapshots."
+        ),
+    )
+
+
 class SnapshotSprawlReport(BaseModel):
     resource_type: Literal["ebs", "rds"]
     retention_days_or_count: int = Field(

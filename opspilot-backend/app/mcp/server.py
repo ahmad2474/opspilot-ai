@@ -26,6 +26,7 @@ from app.services import (
     commitment_service,
     compute_optimizer_service,
     cost_service,
+    deletion_impact_service,
     dynamodb_service,
     ec2_service,
     ecs_service,
@@ -444,6 +445,28 @@ def get_rightsizing_recommendations(resource_type: str) -> str:
     returns enrolled=false with a plain how-to-opt-in note, not an error."""
     return compute_optimizer_service.get_rightsizing_recommendations(
         resource_type
+    ).model_dump_json()
+
+
+@mcp.tool()
+def check_deletion_impact(resource_type: str, resource_id: str) -> str:
+    """Analyze what actually happens if a specific resource is deleted --
+    read-only, this NEVER deletes anything itself (roadmap phase 2 Section
+    3, the permanent read-only replacement for the retired write/approval
+    Step 8). resource_type: 'ec2' (instance termination), 'rds' (DB
+    instance deletion), or 'ebs' (standalone volume deletion). Returns a
+    structured report, not prose: will_be_removed (things that actually
+    disappear), will_persist_and_keep_costing (things that remain and keep
+    costing, each with a real dollar figure where one is computable via
+    estimate_cost), behavioral_warnings (surprising operational
+    consequences -- e.g. an Auto Scaling Group replacing a terminated
+    member instance, so terminating it alone won't reduce spend), and
+    never_affected (independent objects like security groups/IAM roles,
+    stated explicitly for completeness). check_errors lists any live check
+    that could not be verified (e.g. a permission gap) -- treat those as
+    unknown, never as a settled 'no'."""
+    return deletion_impact_service.check_deletion_impact(
+        resource_type, resource_id
     ).model_dump_json()
 
 

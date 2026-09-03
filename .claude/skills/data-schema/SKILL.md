@@ -303,6 +303,79 @@ inventory surface (`scan_region`) a caller could otherwise use to discover a `vp
 If a future change does fold `vpc_endpoint` into the 15-type surface, update this section and
 the `TYPE_CODES` table together in the same change.
 
+## Deletion-impact reports (roadmap phase 2 Section 3) -- a third, distinct response shape
+
+`check_deletion_impact(resource_type, resource_id)` (`services/deletion_impact_service.py`)
+is the permanent, read-only replacement for the retired write/approval Step 8 (Section 3.0:
+the IAM policy stays `Describe*`/`List*`/`Get*`/`pricing:*` forever -- this tool never deletes
+anything, it only analyzes what *would* happen). `resource_type` is `"ec2"` (instance
+termination), `"rds"` (DB instance deletion), or `"ebs"` (standalone volume deletion) -- a
+fixed, known v1 scope (Section 3.2's adaptive-depth LangGraph v2 is separate, not built yet).
+
+Neither `IdleCheckResult`/`CostEstimate` nor a findings-list report fits this question ("what
+actually happens if I delete this") -- it's not one verdict per resource, and it's not a flat
+list of same-shaped problems either; it's four **structurally different** buckets plus one
+meta bucket, returned as `DeletionImpactReport { resource_type, resource_id, will_be_removed,
+will_persist_and_keep_costing, behavioral_warnings, never_affected, check_errors }`:
+
+- **`will_be_removed`**: `[{ resource_type, resource_id, reason }]` -- things that actually
+  disappear (the instance/volume/DB instance itself, an EBS volume with a confirmed
+  `DeleteOnTermination=true`, RDS automated backups as one aggregate entry naming the count
+  rather than one entry per backup).
+- **`will_persist_and_keep_costing`**: `[{ resource_type, resource_id, reason,
+  estimated_monthly_cost_usd, cost_note }]` -- things that remain and keep accruing cost.
+  `estimated_monthly_cost_usd` is a **real dollar figure from calling the existing
+  `cost_service.estimate_cost`** wherever one is computable (an EBS data volume with
+  `DeleteOnTermination=false`, an RDS read replica) -- "a category warning" is deliberately not
+  good enough here. It is `null` (with `cost_note` explaining why) in exactly two cases: (1) a
+  snapshot (EBS or RDS manual) -- `estimate_cost` has no snapshot pricing path, and this tool
+  references `check_snapshot_sprawl` in the note rather than duplicating pricing logic
+  `check_snapshot_sprawl` itself doesn't have either; (2) a live cost lookup that was attempted
+  and failed. An unassociated-after-deletion Elastic IP is the one case that looks like it
+  should just call `estimate_cost` but deliberately doesn't: `estimate_cost("eip", ...)` while
+  the EIP is still associated reports its **current** cost ($0), not what it will cost once the
+  instance is gone -- so this reuses `cost_service`'s own public
+  `EIP_IDLE_HOURLY_RATE_USD`/`HOURS_PER_MONTH` constants directly to project the real
+  post-deletion figure instead of surfacing a misleading $0.
+- **`behavioral_warnings`**: `[{ code, message }]` -- surprising operational consequences that
+  aren't "a sub-resource disappears/persists". `asg_will_replace_instance` is the canonical,
+  highest-value one (Section 3.1's "single most valuable gotcha"): if the EC2 instance is a
+  live, queried member of an Auto Scaling Group (via `DescribeAutoScalingInstances`, not just
+  the `aws:autoscaling:groupName` tag), terminating it directly will NOT reduce compute spend
+  -- the ASG launches a replacement to maintain desired capacity. Also: `lb_target_deregistered`
+  (EC2, registered in an elbv2 target group via `DescribeTargetHealth`),
+  `final_snapshot_is_a_deletion_time_choice` (RDS, always present -- a final snapshot is opt-in
+  and chosen at deletion time, not automatic), `volume_currently_attached` (EBS, AWS refuses
+  `DeleteVolume` on an attached volume until it's detached).
+- **`never_affected`**: `[{ resource_type, resource_id, message }]` -- independent objects
+  stated explicitly for completeness/reassurance, never left implicit (Section 3.1): security
+  groups and the IAM instance profile/role for `ec2`, security groups for `rds`.
+- **`check_errors`**: `list[str]`, not per-entry -- a top-level, report-wide list of queryable
+  facts (ASG membership, load balancer target registration, a per-volume cost lookup, ...) that
+  could not be verified live for this call, e.g. an `AccessDenied` on a not-yet-granted IAM
+  action. **A non-empty `check_errors` means the report is incomplete, not that the unverified
+  facts are false** -- same anti-hallucination discipline as everything else in this app; never
+  present "ASG membership check failed" as "not an ASG member."
+
+Two queryable, instance-specific facts needed a small, additive extension to existing models
+rather than a new AWS call: `EC2Instance.block_device_mappings` (`app/models/ec2.py`) carries
+the real per-volume `DeleteOnTermination` flag (`DescribeInstances` already returns it, just
+not previously mapped -- `attached_volume_ids` only ever carried bare volume IDs);
+`RdsInstanceSummary.read_replica_db_instance_identifiers`/`.backup_retention_period`
+(`app/models/dashboard.py`) likewise come from fields `DescribeDBInstances` already returns.
+`snapshot_service.list_snapshots_for_source(resource_type, source_id)` is a new, thinner
+sibling to `check_snapshot_sprawl` -- the same fetch+normalize helpers, filtered to one
+source's snapshots, with no retention/orphan analysis on top; it's how this tool enumerates
+"snapshots that will persist" without duplicating `check_snapshot_sprawl`'s own AWS-calling
+logic.
+
+Concurrency (Section 3.2): fans out to the fixed, known set of directly-connected resources
+per type (EC2: EBS volumes, EIP, ASG membership, load balancer targets; RDS: snapshots, read
+replicas; EBS: snapshots) using the exact same `ThreadPoolExecutor`/`as_completed`
+per-key-exception-caught pattern `scan_service._run_collectors_concurrently` already
+established for region-scan parallelization (`deletion_impact_service._run_fanout`) --
+deliberately NOT adaptive/conditional; that's a separate v2 scoped to LangGraph later.
+
 ## Who produces/consumes what
 
 - **`backend-agent`** is the sole producer: every new tool/service (`check_idle`,

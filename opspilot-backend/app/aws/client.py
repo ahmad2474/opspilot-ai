@@ -236,6 +236,19 @@ def get_compute_optimizer_client(region: str | None = None) -> Any:
     return _client("compute-optimizer", region)
 
 
+def get_autoscaling_client(region: str | None = None) -> Any:
+    """Auto Scaling Groups -- used by deletion_impact_service to check real
+    ASG membership before reporting EC2 termination impact (roadmap phase 2
+    Section 3.1: "if the instance is a member of an Auto Scaling Group,
+    terminating it directly typically triggers an automatic replacement
+    instance"). A new client/service this app didn't previously call at
+    all. Regionalized like every other compute-adjacent client in this
+    file; `region` overrides the configured default, same convention as
+    get_ec2_client/get_rds_client etc.
+    """
+    return _client("autoscaling", region)
+
+
 def get_pricing_client() -> Any:
     """The AWS Pricing API (`pricing`) only has endpoints in us-east-1,
     ap-south-1, and eu-central-1 -- unlike every other client in this file,

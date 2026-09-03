@@ -19,6 +19,12 @@ conflated (roadmap: "two distinct findings, don't conflate them"):
 
 A snapshot can be both -- both findings are appended independently rather
 than picking one verdict per snapshot.
+
+list_snapshots_for_source(resource_type, source_id) (roadmap phase 2
+Section 3.1) is a separate, thinner entry point added later for
+deletion_impact_service -- reuses this module's own fetch+normalize
+helpers to answer "what snapshots exist for this one specific
+volume/instance", with no retention/orphan analysis on top.
 """
 from __future__ import annotations
 
@@ -27,12 +33,13 @@ from datetime import datetime, timezone
 from typing import Literal, TypedDict
 
 from app.aws.client import get_ec2_client, get_rds_client
-from app.models.snapshot import SnapshotFinding, SnapshotSprawlReport
+from app.models.snapshot import SnapshotFinding, SnapshotSprawlReport, SnapshotSummary
 from app.services import ebs_service, rds_service
 
 
 class UnsupportedSnapshotResourceTypeError(ValueError):
-    """Raised when check_snapshot_sprawl is asked about a type other than 'ebs'/'rds'."""
+    """Raised when check_snapshot_sprawl/list_snapshots_for_source is asked
+    about a type other than 'ebs'/'rds'."""
 
 
 class _NormalizedSnapshot(TypedDict):
@@ -40,6 +47,7 @@ class _NormalizedSnapshot(TypedDict):
     source_id: str | None
     created: datetime | None
     size_gb: int | None
+    snapshot_type: str | None
 
 
 def check_snapshot_sprawl(
@@ -161,26 +169,55 @@ def _build_report(
     )
 
 
-def _check_ebs_snapshot_sprawl(
-    retention_days_or_count: int, retention_mode: str, region: str | None
-) -> SnapshotSprawlReport:
+def _fetch_normalized_ebs_snapshots(region: str | None) -> list[_NormalizedSnapshot]:
+    """The describe_snapshots + normalization step shared by
+    _check_ebs_snapshot_sprawl and list_snapshots_for_source below -- kept
+    as one function so the two callers can never drift on how a raw
+    Snapshot dict is normalized."""
     client = get_ec2_client(region=region)
     paginator = client.get_paginator("describe_snapshots")
     raw_snapshots: list[dict] = []
     for page in paginator.paginate(OwnerIds=["self"]):
         raw_snapshots.extend(page.get("Snapshots", []))
 
-    existing_volume_ids = {v.volume_id for v in ebs_service.list_volumes(region=region).volumes}
-
-    normalized: list[_NormalizedSnapshot] = [
+    return [
         {
             "id": raw["SnapshotId"],
             "source_id": raw.get("VolumeId"),
             "created": raw.get("StartTime"),
             "size_gb": raw.get("VolumeSize"),
+            "snapshot_type": None,  # EBS has no manual/automated distinction
         }
         for raw in raw_snapshots
     ]
+
+
+def _fetch_normalized_rds_snapshots(region: str | None) -> list[_NormalizedSnapshot]:
+    """The describe_db_snapshots + normalization step shared by
+    _check_rds_snapshot_sprawl and list_snapshots_for_source below."""
+    client = get_rds_client(region=region)
+    paginator = client.get_paginator("describe_db_snapshots")
+    raw_snapshots: list[dict] = []
+    for page in paginator.paginate():
+        raw_snapshots.extend(page.get("DBSnapshots", []))
+
+    return [
+        {
+            "id": raw["DBSnapshotIdentifier"],
+            "source_id": raw.get("DBInstanceIdentifier"),
+            "created": raw.get("SnapshotCreateTime"),
+            "size_gb": raw.get("AllocatedStorage"),
+            "snapshot_type": raw.get("SnapshotType"),
+        }
+        for raw in raw_snapshots
+    ]
+
+
+def _check_ebs_snapshot_sprawl(
+    retention_days_or_count: int, retention_mode: str, region: str | None
+) -> SnapshotSprawlReport:
+    normalized = _fetch_normalized_ebs_snapshots(region)
+    existing_volume_ids = {v.volume_id for v in ebs_service.list_volumes(region=region).volumes}
 
     return _build_report(
         "ebs",
@@ -198,25 +235,10 @@ def _check_ebs_snapshot_sprawl(
 def _check_rds_snapshot_sprawl(
     retention_days_or_count: int, retention_mode: str, region: str | None
 ) -> SnapshotSprawlReport:
-    client = get_rds_client(region=region)
-    paginator = client.get_paginator("describe_db_snapshots")
-    raw_snapshots: list[dict] = []
-    for page in paginator.paginate():
-        raw_snapshots.extend(page.get("DBSnapshots", []))
-
+    normalized = _fetch_normalized_rds_snapshots(region)
     existing_instance_ids = {
         i.identifier for i in rds_service.list_instances(region=region).instances
     }
-
-    normalized: list[_NormalizedSnapshot] = [
-        {
-            "id": raw["DBSnapshotIdentifier"],
-            "source_id": raw.get("DBInstanceIdentifier"),
-            "created": raw.get("SnapshotCreateTime"),
-            "size_gb": raw.get("AllocatedStorage"),
-        }
-        for raw in raw_snapshots
-    ]
 
     return _build_report(
         "rds",
@@ -230,3 +252,38 @@ def _check_rds_snapshot_sprawl(
             "never auto-deleted with their source)."
         ),
     )
+
+
+def list_snapshots_for_source(
+    resource_type: Literal["ebs", "rds"], source_id: str, region: str | None = None
+) -> list[SnapshotSummary]:
+    """List every snapshot taken from one specific EBS volume/RDS instance
+    -- no retention/orphan analysis, just the raw listing (used by
+    deletion_impact_service, roadmap phase 2 Section 3.1, to enumerate
+    "snapshots that will persist independently" for a specific
+    resource_id). Reuses the exact same fetch+normalize helpers
+    check_snapshot_sprawl's own per-type branches use above -- this is a
+    thinner read of the same data, not a second AWS-calling path.
+    """
+    if resource_type == "ebs":
+        normalized = _fetch_normalized_ebs_snapshots(region)
+    elif resource_type == "rds":
+        normalized = _fetch_normalized_rds_snapshots(region)
+    else:
+        raise UnsupportedSnapshotResourceTypeError(
+            f"list_snapshots_for_source for resource_type={resource_type!r} is not "
+            "supported -- only 'ebs' and 'rds' snapshots are in scope for this check."
+        )
+
+    now = datetime.now(timezone.utc)
+    return [
+        SnapshotSummary(
+            snapshot_id=s["id"],
+            source_resource_id=s["source_id"],
+            age_days=_age_days(s["created"], now),
+            size_gb=s["size_gb"],
+            snapshot_type=s["snapshot_type"],
+        )
+        for s in normalized
+        if s["source_id"] == source_id
+    ]

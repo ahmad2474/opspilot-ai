@@ -80,6 +80,7 @@ def test_all_tools_are_registered() -> None:
         "check_container_idle",
         "analyze_commitment_utilization",
         "get_rightsizing_recommendations",
+        "check_deletion_impact",
     }
 
 
@@ -468,6 +469,31 @@ def test_get_rightsizing_recommendations(mock_get: object) -> None:
     mock_get.assert_called_once_with("ec2")
     assert result["enrolled"] is False
     assert result["note"] == "opt in first"
+
+
+@patch("app.mcp.server.deletion_impact_service.check_deletion_impact")
+def test_check_deletion_impact(mock_check: object) -> None:
+    from app.models.deletion_impact import DeletionImpactReport, WillBeRemovedEntry
+
+    mock_check.return_value = DeletionImpactReport(
+        resource_type="ec2",
+        resource_id="i-123",
+        will_be_removed=[
+            WillBeRemovedEntry(resource_type="ec2", resource_id="i-123", reason="terminated")
+        ],
+        will_persist_and_keep_costing=[],
+        behavioral_warnings=[],
+        never_affected=[],
+        check_errors=[],
+    )
+
+    result = _call_tool(
+        "check_deletion_impact", {"resource_type": "ec2", "resource_id": "i-123"}
+    )
+
+    mock_check.assert_called_once_with("ec2", "i-123")
+    assert result["resource_type"] == "ec2"
+    assert result["will_be_removed"][0]["resource_id"] == "i-123"
 
 
 @patch("app.mcp.server.investigation_service.find_similar_past_investigations")

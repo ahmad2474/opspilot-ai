@@ -5,10 +5,12 @@ import { useChatLauncher } from "@/components/ChatLauncherProvider";
 import {
   getRegions,
   scanRegion,
+  getDeletionImpact,
   ScanCooldownError,
   type GalaxyResource,
   type RelationLink,
   type ScanResponse,
+  type DeletionImpactReport,
 } from "@/lib/api";
 
 // Mirrors opspilot-backend/app/services/scan_service.py::COOLDOWN_SECONDS --
@@ -151,6 +153,14 @@ export const INFRA_ICON: Record<string, string> = {
 // targets are the same 15 TYPE_CODES as TYPE_LABEL above -- reuse its key
 // set rather than re-listing them so the two can't drift.
 const COST_BEARING_KINDS = new Set(Object.keys(TYPE_LABEL));
+
+// "Check deletion impact" button (DetailPanel, below; roadmap phase 2
+// Section 3.1). The backend endpoint only understands 3 of the 15
+// TYPE_CODES -- GET /deletion-impact 400s on anything else (see
+// opspilot-backend/app/api/routes/deletion_impact.py) -- so the button
+// must be gated on this set client-side rather than letting a click reach
+// the backend and surface a raw 400 as though it were a real failure.
+const DELETION_IMPACT_TYPES = new Set(["ec2", "rds", "ebs"]);
 
 // Non-cost-bearing infra relation targets (data-schema skill's
 // INFRA_KINDS) -- never present in `resources[]`, id-only, rendered
@@ -573,6 +583,41 @@ function DetailPanel({
   const cost = resource.cost;
   const idlePulsing = (idle?.idle_days ?? 0) >= IDLE_PULSE_THRESHOLD_DAYS;
 
+  // "Check deletion impact" (roadmap phase 2 Section 3.1). Local to this
+  // component rather than lifted to GalaxyView's own state -- nothing else
+  // in the file needs this report, and the parent already remounts this
+  // component per-resource (see the `key={resource.id}` on DetailPanel's
+  // call site) so this state can't leak stale data across resources when
+  // the user clicks a different star without closing the panel first.
+  const [impact, setImpact] = useState<DeletionImpactReport | null>(null);
+  const [impactOpen, setImpactOpen] = useState(false);
+  const [impactLoading, setImpactLoading] = useState(false);
+  const [impactError, setImpactError] = useState<string | null>(null);
+
+  const handleCheckDeletionImpact = async () => {
+    // Report reflects live AWS state at fetch time -- once we have one,
+    // re-clicking just toggles the section instead of re-hitting AWS on
+    // every expand/collapse. A "refresh" affordance would need its own
+    // explicit action; out of scope for this first pass.
+    if (impact) {
+      setImpactOpen((open) => !open);
+      return;
+    }
+    setImpactLoading(true);
+    setImpactError(null);
+    try {
+      // Cast is safe: the button rendering this handler is only shown
+      // when DELETION_IMPACT_TYPES.has(resource.type) is true.
+      const report = await getDeletionImpact(resource.type as "ec2" | "rds" | "ebs", resource.id);
+      setImpact(report);
+      setImpactOpen(true);
+    } catch (err) {
+      setImpactError(err instanceof Error ? err.message : "Failed to check deletion impact.");
+    } finally {
+      setImpactLoading(false);
+    }
+  };
+
   return (
     <div className="relative p-6">
       <button
@@ -685,7 +730,154 @@ function DetailPanel({
             View connections ({resource.relations.length})
           </button>
         )}
+
+        {/* Only ec2/rds/ebs are backed by GET /deletion-impact (see
+            DELETION_IMPACT_TYPES above) -- omit the button entirely for
+            the other 12 TYPE_CODES rather than showing it disabled, since
+            "not supported yet" isn't a per-click failure worth a click to
+            discover. Neutral surface/border styling (not accent, not any
+            of the star-status colors) -- this is a plain informational
+            action, not a warning or an idle/active signal. */}
+        {DELETION_IMPACT_TYPES.has(resource.type) && (
+          <button
+            onClick={handleCheckDeletionImpact}
+            disabled={impactLoading}
+            className="w-full rounded-lg border border-border bg-surfacealt py-2 text-sm text-text transition-colors hover:border-muted disabled:cursor-wait disabled:opacity-60"
+          >
+            {impactLoading
+              ? "Checking deletion impact…"
+              : impact
+                ? `${impactOpen ? "Hide" : "Show"} deletion impact ${impactOpen ? "▾" : "▸"}`
+                : "Check deletion impact"}
+          </button>
+        )}
       </div>
+
+      {/* Non-blocking error state -- same accent-banner treatment
+          GalaxyView's own scan-failure warning banner uses (see the
+          `{warning && ...}` block further down in this file), not the
+          hard-error red used for a fully-blocked view: a failed deletion-
+          impact check doesn't invalidate anything else already on screen. */}
+      {impactError && (
+        <div className="mt-3 rounded-lg border border-accent/40 bg-accent/10 p-3 text-xs text-accent">
+          {impactError}
+        </div>
+      )}
+
+      {/* Expandable inline report -- deliberately NOT a mode switch the
+          way "View connections" replaces the whole canvas with a cluster
+          view: this is simpler, purely textual information that belongs
+          right where the user already is. Four labeled buckets plus the
+          check_errors caveat, in the order a reader should weigh them:
+          caveat first (colors what confidence to place in the rest),
+          then behavioral_warnings (the roadmap's own "single most
+          valuable gotcha" framing) most prominently, then the two
+          resource-list buckets, then never_affected last as reassurance. */}
+      {impact && impactOpen && (
+        <div className="mt-3 rounded-lg border border-border bg-surface p-3 text-sm">
+          {impact.check_errors.length > 0 && (
+            <div className="mb-3 rounded border border-accent/40 bg-accent/10 p-2 text-xs text-accent">
+              <div>
+                {impact.check_errors.length} fact{impact.check_errors.length === 1 ? "" : "s"} could
+                not be verified -- see below. This report is incomplete, not &quot;all clear&quot;.
+              </div>
+              <ul className="mt-1 list-disc pl-4">
+                {impact.check_errors.map((e, i) => (
+                  <li key={i}>{e}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {impact.behavioral_warnings.length > 0 && (
+            <div className="mb-4">
+              <div className="mb-1.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-wide text-accent">
+                <span>⚠</span> Behavioral warnings
+              </div>
+              <ul className="flex flex-col gap-1.5">
+                {impact.behavioral_warnings.map((w) => (
+                  <li key={w.code} className="text-xs leading-relaxed text-text">
+                    {w.message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          <div className="mb-4">
+            <div className="mb-1.5 font-mono text-[11px] uppercase tracking-wide text-muted">
+              Will be removed
+              {impact.will_be_removed.length > 0 ? ` (${impact.will_be_removed.length})` : ""}
+            </div>
+            {impact.will_be_removed.length > 0 ? (
+              <ul className="flex flex-col gap-1.5">
+                {impact.will_be_removed.map((e, i) => (
+                  <li key={`${e.resource_type}:${e.resource_id}:${i}`} className="text-xs">
+                    <span className="font-mono text-text">{e.resource_type}</span>{" "}
+                    <span className="break-all font-mono text-muted">{e.resource_id}</span>
+                    <div className="text-muted">{e.reason}</div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-xs text-muted">Nothing else is removed.</div>
+            )}
+          </div>
+
+          <div className="mb-4">
+            <div className="mb-1.5 font-mono text-[11px] uppercase tracking-wide text-muted">
+              Will persist and keep costing
+              {impact.will_persist_and_keep_costing.length > 0
+                ? ` (${impact.will_persist_and_keep_costing.length})`
+                : ""}
+            </div>
+            {impact.will_persist_and_keep_costing.length > 0 ? (
+              <ul className="flex flex-col gap-2">
+                {impact.will_persist_and_keep_costing.map((e, i) => (
+                  <li key={`${e.resource_type}:${e.resource_id}:${i}`} className="text-xs">
+                    <div>
+                      <span className="font-mono text-text">{e.resource_type}</span>{" "}
+                      <span className="break-all font-mono text-muted">{e.resource_id}</span>
+                      {/* null means no pricing path exists at all for this
+                          kind of thing (e.g. a snapshot) -- NEVER render
+                          that as $0/mo, defer to cost_note instead. */}
+                      {e.estimated_monthly_cost_usd != null && (
+                        <span className="ml-1.5 font-mono text-text">
+                          {money(e.estimated_monthly_cost_usd)}/mo
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-muted">{e.reason}</div>
+                    {e.cost_note && <div className="italic text-muted">{e.cost_note}</div>}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-xs text-muted">Nothing persists after deletion.</div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1.5 font-mono text-[11px] uppercase tracking-wide text-muted">
+              Never affected
+            </div>
+            {impact.never_affected.length > 0 ? (
+              <ul className="flex flex-col gap-1">
+                {impact.never_affected.map((e, i) => (
+                  <li
+                    key={`${e.resource_type}:${e.resource_id ?? "none"}:${i}`}
+                    className="text-xs text-muted"
+                  >
+                    {e.message}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div className="text-xs text-muted">—</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1622,7 +1814,15 @@ export default function GalaxyView() {
             }}
           >
             {selected && (
+              // key={resource.id}: forces a remount when the user clicks a
+              // different star while the panel is already open (selected
+              // stays non-null so React would otherwise just re-render the
+              // same instance with new props). Necessary now that
+              // DetailPanel holds its own deletion-impact fetch state --
+              // without this, clicking star B after fetching star A's
+              // report would show A's stale report on B's panel.
               <DetailPanel
+                key={selected.id}
                 resource={selected}
                 region={scan?.region ?? region}
                 onClose={() => setSelectedId(null)}

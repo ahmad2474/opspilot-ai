@@ -42,9 +42,10 @@ eval harness → deletion-impact v2 (LangGraph) → release packaging.
 | Step | Owner | Roadmap-phase2 sections | Status |
 |---|---|---|---|
 | Galaxy Dashboard AWS icons | `frontend-agent` (already existed from Phase 1 step 5 — the doc's "New" label for it is stale, the doc's author didn't have real repo access) | 1.5 | done |
-| Tier 3 waste-check expansion | `backend-agent` (existing, extends its own Phase 1 pattern — no new subagent needed) | 1.1–1.4 | in progress ("Batch A": logs retention, S3 waste, VPC endpoints, snapshot sprawl first; ECS/EKS + Savings Plan/RI + Compute Optimizer are a later "Batch B" needing account opt-ins/Cost Explorer) |
-| Deletion-impact v1 (fixed-depth, ThreadPoolExecutor) | `backend-agent` | 3.0, 3.1 | not started |
-| Eval harness | `eval-agent` (new) | 2 | not started |
+| Tier 3 waste-check expansion (Batch A + Batch B) | `backend-agent` (existing, extends its own Phase 1 pattern — no new subagent needed) | 1.1–1.4 | done |
+| Deletion-impact v1 (fixed-depth, ThreadPoolExecutor), backend only | `backend-agent` | 3.0, 3.1 | done |
+| **Deletion-impact UI — button in the resource detail panel** (user-requested follow-up, not in the original roadmap doc) | `frontend-agent` | 3.1 (UI for the shipped backend tool) | queued — do together with the eval harness resumption, same session, not started |
+| Eval harness | `eval-agent` (new) | 2 | in progress, paused mid-build (fixtures/oracle/grading/question-bank/CI all built, not yet reviewed — resume the same agent rather than restarting) |
 | Deletion-impact v2 (adaptive-depth, LangGraph) | `langgraph-agent` (new) — only after v1 has shipped and seen real usage | 3.2, 3.3 | not started |
 | Public release packaging | `devops-agent` (new) — deliberately last | 4 | not started |
 | Security/code review | `security-reviewer` / `code-reviewer` (existing, unchanged role) | — | runs after every step above |
