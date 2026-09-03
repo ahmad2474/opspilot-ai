@@ -2478,4 +2478,64 @@ it in a future session.
   issue). If the tool roster grows enough to threaten the 8000 TPM ceiling again, the next lever is
   per-question tool subsetting, not further prompt-trimming -- noted directly in
   `AGENT_INSTRUCTIONS`'s own new preamble comment.
-- Not yet reviewed by `security-reviewer`/`code-reviewer`. Nothing in this section is committed.
+- **Reviewed 2026-09-03, after committing** (`814eb29`/`8bc1c8c`/`57911d2`): both `security-reviewer`
+  and `code-reviewer` clean, no blockers, run in parallel.
+  - `security-reviewer`: moto usage confirmed safe (fake credentials set before `mock_aws()`, empirically
+    verified to intercept every `get_*_client()` factory including the Pricing API; no real account
+    ID/ARN/secret anywhere in `eval/`, confirmed by grep across the full diff); prompt condensation
+    confirmed not to weaken any anti-hallucination/read-only guarantee; timeout/`AbortController`
+    changes confirmed not to leak internal error detail. One low-severity note, **fixed same day**:
+    `deepeval` sends anonymous telemetry to Confident AI by default — opted out via
+    `DEEPEVAL_TELEMETRY_OPT_OUT=1` set in `eval/conftest.py` (applies to every run, local or CI, no
+    separate CI config needed) and documented in `docs/SECURITY.md` §5.
+  - `code-reviewer`: independently re-ran the full suite (440 passed) and `ruff check .` (clean),
+    matching the commit claims exactly; confirmed `test_orchestrator_provider_timeout.py` is real
+    TDD (the assertion genuinely cannot pass without the `asyncio.wait_for` fix, not theater);
+    diffed the full pre-condensation `AGENT_INSTRUCTIONS` against the new version line by line and
+    confirmed every distinct behavioral rule survives; checked every trimmed tool docstring against
+    its Pydantic response model and confirmed no enum value or field name was silently orphaned;
+    confirmed the eval harness's layering (`oracle/` → `services/` only, `grading/` → `models/`
+    only) has no violations. One low-severity note, **fixed same day**:
+    `opspilot_llm_provider_timeout_seconds` was missing from `opspilot-backend/.env.example` — added,
+    matching every other provider setting already documented there.
+- **Judged eval tier run for the first time, same day**: `pytest eval/ -k "llm_judge"` — both cases
+  failed, but purely on quota exhaustion, not a defect: Groq hit its **daily** token cap for the
+  first time today (`TPD Limit 200000, Used 196930` — the deterministic-tier re-runs earlier today
+  finally exhausted it, a new exhaustion mode beyond the per-minute TPM limit fixed above) and
+  Gemini's daily quota was already exhausted from earlier testing. Both are expected to clear on
+  their own (daily reset), not a code issue — not re-run again today to avoid making the Groq
+  exhaustion worse for tomorrow's testing.
+
+### Gemini `thought_signature` bug -- investigated, not fixed, user accepted the tradeoff (2026-09-03)
+- **Root cause confirmed via research, not guessed**: Gemini 3.x models make returning
+  `thought_signature` (an opaque, cryptographically-signed reasoning token Google attaches to a
+  function-call response) mandatory on every subsequent turn of a tool-calling conversation. The
+  `openai-agents` Python SDK this app uses has a confirmed, still-open upstream bug
+  (`openai/openai-agents-python#2137`, targeted at a future 0.6.x release, no workaround documented)
+  that drops this field when reconstructing the follow-up request -- Gemini then rejects it with
+  `400 Function call is missing a thought_signature`.
+- **Live-verified there is no simple side-step**: tried pinning `gemini_model` to `gemini-2.5-flash`
+  (Gemini 2.5 makes the signature optional, not mandatory) -- live call returned `404 This model
+  ... is no longer available to new users`, confirmed on this account, not assumed. Every
+  Gemini flash-tier model currently available to this account is Gemini 3.x and requires the
+  signature. Research also confirmed "minimal thinking level" does not avoid the requirement either.
+- **Almost made the same mistake NVIDIA's fix used, caught before implementing**: NVIDIA was
+  disabled by blanking `NVIDIA_API_KEY` in `.env` (NVIDIA has no other use in this app). The same
+  approach for Gemini would have been wrong and was caught by the user before any code changed --
+  `app/services/investigation_service.py`'s `_embed()` makes its own direct REST call to Gemini's
+  `embedContent` endpoint using the same `GEMINI_API_KEY`, entirely separate from the chat-
+  completions path where the SDK bug lives. Blanking the key would have silently broken
+  investigation-memory save/recall (best-effort error handling means it wouldn't have crashed
+  anything, just quietly stopped working) while "fixing" an unrelated chat provider issue.
+- **Decision (user choice, 2026-09-03): keep Gemini in the chat provider fallback chain as-is.**
+  The alternative (exclude "gemini" from `provider_order` in `app/core/config.py` specifically for
+  chat, leaving `GEMINI_API_KEY` untouched for embeddings) was scoped out and ready to implement,
+  but the user chose to accept the tradeoff instead: Gemini still fails on any tool-calling
+  follow-up turn (the common case for this app), costing up to
+  `opspilot_llm_provider_timeout_seconds` (45s) of dead time in the fallback chain when it does,
+  but it remains a real, working fallback for tool-free/simple-lookup questions and for whatever
+  first-turn tool call it does correctly complete (live-verified earlier the same day:
+  `check_deletion_impact` itself ran successfully through Gemini before the follow-up turn failed).
+  No code changed as a result of this investigation. Revisit if/when
+  `openai-agents-python#2137` ships a fix -- upgrading the pinned `agents` dependency at that point
+  should resolve this with no further code change needed here.

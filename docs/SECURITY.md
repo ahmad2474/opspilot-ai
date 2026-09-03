@@ -160,6 +160,13 @@ added — reproduced in summary here:
 - Request logging (`opspilot-backend/app/core/logging.py`'s `RequestIdMiddleware`) logs only HTTP
   method, path, status code, and duration — never headers, request/response bodies, bearer tokens,
   or cookie values.
+- Dev-only dependency, not the shipped app: the eval harness's `deepeval` dependency
+  (`opspilot-backend/eval/`, `requirements-dev.txt`) sends anonymous usage telemetry to Confident AI
+  by default. Opted out via `DEEPEVAL_TELEMETRY_OPT_OUT=1`, set in `eval/conftest.py` before
+  anything in the package imports `deepeval` — applies to every eval run, local or CI, with no
+  separate CI configuration needed. Flagged by `security-reviewer` 2026-09-03; the data involved is
+  synthetic moto-fixture facts and free-tier-LLM-generated answers, never real AWS data or
+  credentials, but the opt-out removes the outbound flow entirely regardless.
 
 ## 6. MCP server — token authentication
 

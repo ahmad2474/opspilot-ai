@@ -7,6 +7,14 @@ agent directly, never through the HTTP app.
 """
 from __future__ import annotations
 
+import os
+
+# Opt out of DeepEval's default anonymous telemetry (sent to Confident AI)
+# before anything in this package imports deepeval -- security-reviewer
+# flagged this as an undocumented new outbound data flow (2026-09-03).
+# setdefault so a caller who wants telemetry back can still override it.
+os.environ.setdefault("DEEPEVAL_TELEMETRY_OPT_OUT", "1")
+
 from collections.abc import Iterator
 
 import pytest
