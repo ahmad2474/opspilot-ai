@@ -2614,3 +2614,24 @@ it in a future session.
   writing a corrupted file. Live re-verified against the reviewer's own exact reproduction (now
   correctly rejected, file left unmodified) and against the harmless trailing-newline case (still
   silently accepted, no false-positive) and the full wizard dry-run flow (unaffected).
+  `code-reviewer`: correctness claims (upsert logic, base64/bcrypt round-trip vs. `lib/auth.ts`'s
+  real decode, table schema vs. the real service files, `AWS_REGION` fix, Terraform defaults vs.
+  `Settings`, README Mermaid syntax, README/script behavior match) all independently re-verified
+  against the actual code, not just re-trusted — confirmed accurate. **Four findings, all fixed
+  same day**: (1) `provision_tables()` used `subprocess.run(check=True)` with nothing catching
+  `CalledProcessError` — a plausible first-run failure (credentials lacking `dynamodb:CreateTable`)
+  crashed with a raw traceback instead of the wizard's own established graceful-failure message;
+  fixed by having it return `bool` and folding a failure into the same "fix errors above, re-run"
+  path `smoke_test()` already uses. (2) `_create_iam_user()` only caught the initial
+  `get_caller_identity()`/`create_user` calls, not `put_user_policy`/`create_access_key` — a
+  partial-permission principal (has `iam:CreateUser`, missing `iam:PutUserPolicy`) crashed instead
+  of reaching the documented "falling back to manual entry" path; fixed with one `try/except
+  ClientError` around the whole sequence, message also notes a partially-created IAM user won't be
+  auto-deleted. (3) `ensure_env_files()` had no handling for a missing `.env.example` source (e.g.
+  a shallow clone) — would've been an unexplained stack trace on the wizard's very first step;
+  fixed with a clean `SystemExit` naming the missing file, live-verified. (4) README's Docker
+  Compose line (pre-existing, not introduced this session, but caught in this review pass) claimed
+  `docker compose up --build` runs the whole app — `docker-compose.yml`'s `frontend` service is
+  commented out (and no frontend `Dockerfile` exists at all yet) — corrected the README line to
+  state plainly it covers the backend only. All four re-verified: full dry-run flow still passes,
+  the new `SystemExit` path triggers cleanly on a missing source file, `ruff check scripts/` clean.

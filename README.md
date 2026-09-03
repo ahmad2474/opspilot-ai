@@ -194,7 +194,9 @@ account ID), and create the 3 DynamoDB tables yourself (`opspilot-investigations
 `python3 scripts/provision_tables.py` / the Terraform module in `scripts/terraform/` for just that
 one step. The app never auto-creates these tables at runtime.
 
-Or via Docker Compose from the project root: `docker compose up --build`.
+The backend also runs via Docker Compose from the project root: `docker compose up --build`
+(`docker-compose.yml`'s `frontend` service is commented out — no frontend `Dockerfile` exists yet —
+so this covers the backend only; run the frontend with `npm run dev` as above either way).
 
 ### Running tests
 

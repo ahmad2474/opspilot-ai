@@ -79,9 +79,18 @@ def ensure_env_files() -> None:
     for example, real in pairs:
         if real.exists():
             print(f"{real.relative_to(REPO_ROOT)} already exists -- leaving it untouched.")
-        else:
-            shutil.copy(example, real)
-            print(f"Created {real.relative_to(REPO_ROOT)}.")
+            continue
+        if not example.exists():
+            # code-reviewer finding, 2026-09-03: this is the wizard's very
+            # first step, so a bare FileNotFoundError here would be an
+            # unexplained stack trace before the user has seen anything
+            # else -- e.g. a shallow/partial clone missing this file.
+            raise SystemExit(
+                f"Expected to find {example.relative_to(REPO_ROOT)} but it's missing -- "
+                f"is this a full clone of the repo? Re-clone and try again."
+            )
+        shutil.copy(example, real)
+        print(f"Created {real.relative_to(REPO_ROOT)}.")
 
 
 def append_env(path: Path, key: str, value: str) -> None:
@@ -181,16 +190,35 @@ def _create_iam_user() -> tuple[str, str, str] | None:
     policy_doc = IAM_POLICY_PATH.read_text().replace("<YOUR_ACCOUNT_ID>", account_id)
     user_name = "opspilot-readonly"
 
+    # One try/except around the whole sequence, not just create_user --
+    # code-reviewer finding, 2026-09-03: the auto-provisioning principal
+    # having iam:CreateUser but missing iam:PutUserPolicy/
+    # iam:CreateAccessKey is a realistic partial-permission scenario
+    # (exactly the kind of thing the surrounding prompt already warns the
+    # user this path needs elevated permissions for), and it used to
+    # crash with an unhandled ClientError instead of reaching the
+    # documented "falling back to manual entry" path below.
     try:
-        iam.create_user(UserName=user_name)
-        print(f"Created IAM user '{user_name}'.")
-    except iam.exceptions.EntityAlreadyExistsException:
-        print(f"IAM user '{user_name}' already exists -- reusing it.")
+        try:
+            iam.create_user(UserName=user_name)
+            print(f"Created IAM user '{user_name}'.")
+        except iam.exceptions.EntityAlreadyExistsException:
+            print(f"IAM user '{user_name}' already exists -- reusing it.")
 
-    iam.put_user_policy(UserName=user_name, PolicyName="OpspilotReadOnly", PolicyDocument=policy_doc)
-    print("Attached the read-only policy from docs/iam-policy.json.")
+        iam.put_user_policy(UserName=user_name, PolicyName="OpspilotReadOnly", PolicyDocument=policy_doc)
+        print("Attached the read-only policy from docs/iam-policy.json.")
 
-    key = iam.create_access_key(UserName=user_name)["AccessKey"]
+        key = iam.create_access_key(UserName=user_name)["AccessKey"]
+    except ClientError as exc:
+        print(
+            f"Auto-provisioning the IAM user failed partway through: {exc}\n"
+            f"If the user was created but a later step failed, '{user_name}' may already exist "
+            f"in your account with an incomplete policy/no access key -- this wizard won't "
+            f"delete it for you; check the IAM console if you want to clean it up before "
+            f"retrying, or just continue with manual entry below."
+        )
+        return None
+
     region = input("AWS_REGION [us-east-1]: ").strip() or "us-east-1"
     print(
         "Access key generated -- AWS shows the secret key exactly once at creation time, "
@@ -263,17 +291,30 @@ def setup_llm_keys() -> None:
         )
 
 
-def provision_tables() -> None:
+def provision_tables() -> bool:
     """Runs provision_tables.py as a subprocess, which inherits this
     process's environment by default -- but the AWS credentials just
     written by setup_aws_credentials() only went to the .env *file*, not
     this process's own os.environ, so the subprocess wouldn't see them
     without explicitly merging the just-written values in. Live-verified
     this gap by actually running it against a real account before fixing
-    -- it failed with NoRegionError/NoCredentialsError otherwise."""
+    -- it failed with NoRegionError/NoCredentialsError otherwise.
+
+    Returns False on failure instead of raising -- code-reviewer finding,
+    2026-09-03: a non-zero exit here (e.g. the credentials just entered
+    lack dynamodb:CreateTable, a plausible first-run scenario) used to
+    surface as a raw, unhandled CalledProcessError traceback instead of
+    this script's own established graceful-failure message, breaking
+    main()'s otherwise-consistent error-handling contract.
+    """
     print("\nProvisioning DynamoDB tables...")
     env = {**os.environ, **_load_env(BACKEND_ENV)}
-    subprocess.run([sys.executable, str(PROVISION_SCRIPT)], check=True, env=env)
+    try:
+        subprocess.run([sys.executable, str(PROVISION_SCRIPT)], check=True, env=env)
+        return True
+    except subprocess.CalledProcessError as exc:
+        print(f"Table provisioning failed (exit code {exc.returncode}) -- see the error above.")
+        return False
 
 
 def _load_env(path: Path) -> dict[str, str]:
@@ -327,9 +368,9 @@ def main() -> None:
     write_admin_credentials()
     setup_aws_credentials()
     setup_llm_keys()
-    provision_tables()
+    tables_ok = provision_tables()
 
-    if not smoke_test():
+    if not tables_ok or not smoke_test():
         print(
             "\n== Setup finished with errors above -- fix them, then re-run before starting "
             "the app. Re-running is safe: every value is upserted by key, so re-entering "
