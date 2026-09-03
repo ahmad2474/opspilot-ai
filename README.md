@@ -13,6 +13,8 @@ truth computed straight from the service layer — not another LLM's opinion.
 
 ![CI](https://github.com/ahmad2474/opspilot-ai/actions/workflows/ci.yml/badge.svg)
 
+![OpsPilot AI galaxy dashboard demo](docs/assets/demo.gif)
+
 > Built a full-stack agentic AWS FinOps platform: a Next.js "galaxy" dashboard visualizing 15 AWS
 > resource types by cost and idle status, a FastAPI backend with region-wide concurrent scanning
 > and 7 categories of waste detection beyond idle compute, an OpenAI Agents SDK-powered chat
