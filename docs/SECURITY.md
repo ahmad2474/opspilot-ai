@@ -150,10 +150,10 @@ added — reproduced in summary here:
   patterns, private-key blocks, bearer tokens, inline passwords): **no secret has ever been
   committed to this repository, live or historical.**
 - This repository is public on GitHub, so GitHub's secret scanning is automatically enabled at no
-  cost. **Push protection's on/off state has not been verified** — it requires the repo owner to
-  check it directly under GitHub → Settings → Code security with an authenticated session; this is
-  a manual follow-up, not something verifiable or fixable from the codebase itself (tracked in
-  `docs/BUILD_PROGRESS.md`).
+  cost. **Push protection confirmed enabled** (2026-09-03, via `gh api repos/ahmad2474/opspilot-ai
+  --jq '.security_and_analysis'`: `secret_scanning.status` and
+  `secret_scanning_push_protection.status` both `"enabled"`) — previously flagged as needing a
+  manual check, now closed.
 - Standing policy if a secret is ever accidentally committed: rotate it immediately in the
   provider's console. `git revert`/history rewriting does not, on its own, remove a secret's
   exposure — anyone who already cloned or viewed the commit has it.
@@ -255,7 +255,6 @@ the feature it's auditing.
 |---|---|---|
 | Static, long-lived AWS IAM user keys (Section 3) | Accepted for now | Hosting for/by anyone other than the single local operator |
 | No rate limiting/lockout (login, MCP `call_tool`) | Accepted for now | Any internet-facing deployment |
-| GitHub push-protection on/off status unverified | Needs manual check | N/A — repo-owner action, not code |
 | Write-action/approval layer | **Retired permanently** (Phase 2 roadmap §3.0), not deferred | N/A — this is a closed decision, not a pending one. Replaced by the read-only `check_deletion_impact` (§3), which answers "what would this affect" without ever mutating AWS |
 | Multi-account / cross-account role assumption | Not started, deferred | Supporting more than one connected AWS account (roadmap Section 2/8) |
 | MCP tool calls not individually audit-logged | Accepted, covered by app logs instead | Per-user MCP attribution (not meaningful until MCP moves beyond one shared token) |

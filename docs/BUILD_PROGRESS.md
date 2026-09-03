@@ -2635,3 +2635,11 @@ it in a future session.
   commented out (and no frontend `Dockerfile` exists at all yet) — corrected the README line to
   state plainly it covers the backend only. All four re-verified: full dry-run flow still passes,
   the new `SystemExit` path triggers cleanly on a missing source file, `ruff check scripts/` clean.
+
+## GitHub push-protection status — closed (2026-09-03)
+The one remaining "needs manual check" item from `docs/SECURITY.md`. Checked directly via
+`gh api repos/ahmad2474/opspilot-ai --jq '.security_and_analysis'`: `secret_scanning.status` and
+`secret_scanning_push_protection.status` both `"enabled"`. Updated `docs/SECURITY.md` (§5, moved
+from "unverified" to confirmed; removed the now-resolved row from the §8 known-limitations table).
+No code change. This was the last open item from the original security review; nothing left
+tracked as "needs manual check" anywhere in `docs/SECURITY.md`.
