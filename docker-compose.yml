@@ -7,6 +7,9 @@ services:
       - "8000:8000"
     env_file:
       - ./opspilot-backend/.env
+    # The image itself runs without --reload (see Dockerfile); add it here so
+    # the source mount below actually live-reloads during local dev.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     volumes:
       # Mounts source for live-reload without rebuilding the image on every change.
       # Remove this in anything resembling a prod setup.

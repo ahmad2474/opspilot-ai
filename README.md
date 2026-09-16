@@ -213,6 +213,11 @@ run the suite. The eval harness (`pytest eval/`) is separate: its fixture/oracle
 credentials, but end-to-end answer grading needs a real `GROQ_API_KEY` or `GEMINI_API_KEY` and
 makes live (free-tier) calls.
 
+## Deploying it (free tier)
+
+Frontend on Vercel, backend on Render via the `render.yaml` Blueprint at the repo root — full
+step-by-step with every env var in [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
 ## Trademark notice
 
 The galaxy dashboard, its legend, and the resource-type tables use AWS's official Architecture
