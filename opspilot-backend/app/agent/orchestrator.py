@@ -204,6 +204,10 @@ TOOLS = [
 
 
 def _build_agent(provider: LLMProviderName) -> Agent:
+    # Gemini's thought_signature round-tripping (required by 2.5+ models for
+    # multi-turn tool calling) is handled by gemini_thought_signature_patch,
+    # imported in app.agent.providers — no per-provider model_settings needed
+    # here.
     model = build_model(provider)
     return Agent(name="OpsPilot", instructions=AGENT_INSTRUCTIONS, tools=TOOLS, model=model)
 

@@ -2,6 +2,14 @@
 .env
 *.pem
 
+# --- Terraform (infra/) ---
+.terraform/
+terraform.tfstate
+terraform.tfstate.backup
+*.tfvars
+tfplan
+*.tfplan
+
 # --- Python ---
 .venv/
 __pycache__/

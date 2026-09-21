@@ -18,6 +18,7 @@ from agents import OpenAIChatCompletionsModel
 from agents.models.interface import Model
 from openai import AsyncOpenAI
 
+from app.agent import gemini_thought_signature_patch  # noqa: F401 - applies its patch on import
 from app.core.config import LLMProviderName, Settings, get_settings
 
 
