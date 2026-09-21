@@ -97,10 +97,14 @@ truth computed straight from the service layer — not another LLM's opinion.
 
 ```mermaid
 flowchart TD
-    UI["Next.js UI<br/>Galaxy · Idle Resources · Investigations<br/>Cost Overview · Audit Log · Settings<br/>+ floating chat launcher"] -->|HTTP/JSON, bearer token| API["FastAPI backend<br/>require_session on every route"]
-    API --> Agent["agent/<br/>OpenAI Agents SDK orchestration"]
-    API --> Resources["/resources/*, /waste/*, /deletion-impact routes<br/>check_idle · estimate_cost · scan_region · waste checks"]
-    API --> Info["/investigations, /audit-log,<br/>/mcp/token/*, /aws/account"]
+    Browser(["Browser"]) -->|HTTP :3000| UI
+    subgraph EC2["EC2 t3.small — Docker Compose"]
+        UI["Next.js UI<br/>Galaxy · Idle Resources · Investigations<br/>Cost Overview · Audit Log · Settings<br/>+ floating chat launcher"] -->|HTTP/JSON, bearer token| API["FastAPI backend<br/>require_session on every route"]
+        API --> Agent["agent/<br/>OpenAI Agents SDK orchestration"]
+        API --> Resources["/resources/*, /waste/*, /deletion-impact routes<br/>check_idle · estimate_cost · scan_region · waste checks"]
+        API --> Info["/investigations, /audit-log,<br/>/mcp/token/*, /aws/account"]
+    end
+    TF["infra/ Terraform<br/>instance · Elastic IP · security group"] -.->|provisions| EC2
     Agent --> Tools["tools/<br/>thin function_tool wrappers"]
     Tools --> Services["services/<br/>idle · cost · scan (concurrent) · waste (logs/S3/snapshots/<br/>VPC endpoints/ECS/commitments/rightsizing) · deletion-impact ·<br/>account · audit log · mcp auth · investigation memory"]
     Resources --> Services
@@ -139,7 +143,7 @@ etc.).
 | Auth | NextAuth.js (Credentials provider) + FastAPI HS256 JWT session validation, shared-secret signed |
 | Frontend | Next.js 14 (App Router), TypeScript, Tailwind — official AWS Architecture Icons, hand-rolled inline SVG otherwise |
 | Data stores | DynamoDB — `opspilot-investigations` (RAG), `opspilot-mcp-tokens`, `opspilot-audit-log` |
-| Infra | AWS Free Plan; DynamoDB tables provisioned by `scripts/setup.py`, `scripts/provision_tables.py`, or the Terraform module in `scripts/terraform/` — pick one, zero ongoing spend either way |
+| Infra | App hosted on a single EC2 instance via the Terraform module in [`infra/`](infra/) (Docker Compose, ~$0.02/hr `t3.small`); DynamoDB tables (zero ongoing spend) provisioned separately by `scripts/setup.py`, `scripts/provision_tables.py`, or `scripts/terraform/` — same tool, two unrelated jobs, see [Deploying it](#deploying-it-aws) |
 | CI | GitHub Actions — backend lint (ruff) + test (pytest) + Docker build; frontend lint + build; separate eval-harness workflow (deterministic tier every PR, judged tier on a label/nightly cron) |
 
 ## Running it locally
@@ -213,10 +217,19 @@ run the suite. The eval harness (`pytest eval/`) is separate: its fixture/oracle
 credentials, but end-to-end answer grading needs a real `GROQ_API_KEY` or `GEMINI_API_KEY` and
 makes live (free-tier) calls.
 
-## Deploying it (free tier)
+## Deploying it (AWS)
 
-Frontend on Vercel, backend on Render via the `render.yaml` Blueprint at the repo root — full
-step-by-step with every env var in [`docs/DEPLOY.md`](docs/DEPLOY.md).
+One EC2 instance runs both frontend and backend as Docker containers, provisioned by the Terraform
+module in [`infra/`](infra/) — a security group scoped to SSH-from-you plus the app's two ports, an
+Elastic IP so the URL survives a reboot, and `cloud-init` installing Docker on first boot. Full
+step-by-step — including how to destroy and recreate it — in [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
+Unlike the DynamoDB tables above, this instance costs money while it's running — a `t3.small` runs
+about $0.02/hr in `us-east-1`. `terraform destroy` tears everything (instance, Elastic IP, security
+group, key pair) back down in one shot when you're done with it.
+
+> `infra/` provisions *where the app runs* (the EC2 instance and its networking). `scripts/terraform/`
+> provisions *app data* (the 3 DynamoDB tables) — same tool, two unrelated jobs; don't confuse them.
 
 ## Trademark notice
 
